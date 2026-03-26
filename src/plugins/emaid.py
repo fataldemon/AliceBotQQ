@@ -81,7 +81,7 @@ def _checker(event: MessageEvent) -> bool:
     :return:
     """
     user_id = event.get_user_id()
-    if user_id == "2367513895" or user_id in user_blacklist:
+    if user_id == event.self_id or user_id in user_blacklist:
         return False
     message = str(event.get_plaintext())
     # for seg in event.get_message():
@@ -335,8 +335,9 @@ async def chat(event: Event):
     # 线程锁，保证同时只有一个请求在LLM进行处理，如果此时间内有多个请求进入就进入缓存区
     global THREAD_LOCKER
     while not THREAD_LOCKER:
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.4)
     THREAD_LOCKER = False
+
     # 获取呼叫用户名(戳一戳和普通消息)
     if isinstance(event, PokeNotifyEvent):
         _poke, _pokee, _poker = True, event.target_id, event.user_id
@@ -344,35 +345,35 @@ async def chat(event: Event):
     else:
         _poke = False
         user_id = str(event.get_user_id())
-        # 图片格式处理
         message = process_message(event.get_message(), user_id)
 
     print(f"userid={user_id}")
-    # 获取群组ID和群组名称并存储
+
     group_id = event.group_id
-    # 群聊模式
+
+    # 群聊模式：获取历史预消息
     pre_messages = ""
     if GROUP_SWITCH and message_buffer.get(group_id) is not None:
         for pre_message in message_buffer.get(group_id):
             pre_messages += pre_message + "\n"
         message_buffer[group_id] = []
-    # 添加图片缓存
     pre_messages += recent_img_add(group_id)
 
+    # 获取游戏状态与敏感词
     game_status = get_game_status()
     ng_words = get_ban_words()
 
-    status = f"{get_status_description()}"
+    # 获取用户昵称
     if not _poke:
         username = event.sender.card if event.sender else None
         if username != "":
             set_talker_name(user_id, username)
-
     username = get_talker_name(user_id)
     if user_id == master_id:
         username = "老师"
     print(f"username={username}")
 
+    # 构建时间信息
     current_time = datetime.datetime.now()
     current_date_str = current_time.strftime("今天是%Y年%m月%d日")
     hour = current_time.hour
@@ -410,116 +411,106 @@ async def chat(event: Event):
     else:
         weekday = "日"
     dater = f"{current_date_str}，星期{weekday}，{current_time_str}"
-    status = status + "\n" + dater
+    status = get_status_description() + "\n" + dater
 
     # 对话者信息
     user_info = get_user_description(user_id)
     print(user_info)
-    # 初始化工具类
+
+    # 工具初始化
     tools = get_general_tools()
 
-    tips = "\n（提示："
+    # 根据不同类型构建发送给 LLM 的消息
     if _poke:
-        thought, response, feedback, finish_reason, function = await send_chat(
-            f"{pre_messages}（{get_poke_description(user_id)}）",
-            group_id,
-            user_info, status, tools)
+        prompt = f"{pre_messages}（{get_poke_description(user_id)}）"
     elif user_id == master_id:
-        tips += "）"
-
+        tips = "\n（提示："
         if message.strip() != "":
-            # 打赏
             if message.startswith("/给你钱"):
                 message = message.replace("/给你钱", "")
-                thought, response, feedback, finish_reason, function = await send_chat(
-                    f"{pre_messages}（{username}给了爱丽丝1信用点，爱丽丝的财富增加了。）" + message,
-                    group_id, user_info, status, tools)
-            # Momotalk
+                prompt = f"{pre_messages}（{username}给了爱丽丝1信用点，爱丽丝的财富增加了。）{message}"
             elif message.startswith("/momotalk"):
                 message = message.replace("/momotalk", "")
-                if message.strip() == "":  # 收到爱丽丝信息
-                    thought, response, feedback, finish_reason, function = await send_chat(
-                        f"{pre_messages}（{username}收到了从爱丽丝那里发来的Momotalk信息）",
-                        group_id, user_info, status, tools)
-                else:  # 给爱丽丝发送信息
-                    thought, response, feedback, finish_reason, function = await send_chat(
-                        f"{pre_messages}（{username}给爱丽丝发送了一条Momotalk信息）{message}",
-                        group_id, user_info, status, tools)
-            # 普通对话
+                if message.strip() == "":
+                    prompt = f"{pre_messages}（{username}收到了从爱丽丝那里发来的Momotalk信息）"
+                else:
+                    prompt = f"{pre_messages}（{username}给爱丽丝发送了一条Momotalk信息）{message}"
             else:
-                thought, response, feedback, finish_reason, function = await send_chat(
-                    f"{pre_messages}（{username}对爱丽丝说）" + message + tips,
-                    group_id, user_info, status, tools)
+                prompt = f"{pre_messages}（{username}对爱丽丝说）{message}{tips}"
         else:
-            thought, response, feedback, finish_reason, function = await send_chat(
-                f"{pre_messages}（{username}叫了爱丽丝一声）", group_id,
-                user_info, status, tools)
+            prompt = f"{pre_messages}（{username}叫了爱丽丝一声）"
     else:
-        # 敏感词检测
-        bad_words = ""
-        for bad_word in ng_words:
-            if bad_word in message:
-                bad_words += bad_word + "，"
-        if bad_words != "":
-            tips += f"{bad_words}这是非常粗俗的词语，是不应该对孩子说的话。使用这样词语的人必须用光之剑sword_of_light教训一顿。"
-
+        # 普通群成员
         user_name = get_talker_name(user_id)
+        # 检查是否在死亡名单
         if user_name not in game_status["death_list"] and user_name + "同学" not in game_status["death_list"]:
             if message.strip() != "":
-                # 打赏
                 if message.startswith("/给你钱"):
                     message = message.replace("/给你钱", "")
-                    thought, response, feedback, finish_reason, function = await send_chat(
-                        f"{pre_messages}（名叫“{user_name}”的同学给了爱丽丝1信用积分，爱丽丝的财富增加了。）{message}",
-                        group_id, user_info, status, tools)
-                # Momotalk
+                    prompt = f"{pre_messages}（名叫“{user_name}”的同学给了爱丽丝1信用积分，爱丽丝的财富增加了。）{message}"
                 elif message.startswith("/momotalk"):
                     message = message.replace("/momotalk", "")
-                    if message.strip() == "":  # 收到爱丽丝信息
-                        thought, response, feedback, finish_reason, function = await send_chat(
-                            f"{pre_messages}（名叫“{user_name}”的同学收到了爱丽丝那里发来的Momotalk信息）",
-                            group_id, user_info, status, tools)
-                    else:  # 给爱丽丝发送信息
-                        thought, response, feedback, finish_reason, function = await send_chat(
-                            f"{pre_messages}（名叫“{user_name}”的同学给爱丽丝发送了一条Momotalk信息）{message}",
-                            group_id, user_info, status, tools)
-                # 普通对话
+                    if message.strip() == "":
+                        prompt = f"{pre_messages}（名叫“{user_name}”的同学收到了爱丽丝那里发来的Momotalk信息）"
+                    else:
+                        prompt = f"{pre_messages}（名叫“{user_name}”的同学给爱丽丝发送了一条Momotalk信息）{message}"
                 else:
-                    thought, response, feedback, finish_reason, function = await send_chat(
-                        f"{pre_messages}（名叫“{user_name}”的同学对爱丽丝说）{message}",
-                        group_id, user_info, status, tools)
+                    # 敏感词检测
+                    bad_words = ""
+                    for bad_word in ng_words:
+                        if bad_word in message:
+                            bad_words += bad_word + "，"
+                    if bad_words != "":
+                        tips = f"（提示：{bad_words}这是非常粗俗的词语，是不应该对孩子说的话。使用这样词语的人必须用光之剑sword_of_light教训一顿。）"
+                    else:
+                        tips = ""
+                    prompt = f"{pre_messages}（名叫“{user_name}”的同学对爱丽丝说）{message}{tips}"
             else:
-                message = f"{pre_messages}（名叫“{user_name}”的同学叫了爱丽丝一声。）"
-                thought, response, feedback, finish_reason, function = await send_chat(
-                    f"{message}",
-                    group_id, user_info, status, tools)
+                prompt = f"{pre_messages}（名叫“{user_name}”的同学叫了爱丽丝一声。）"
         else:
             await group_chatter.finish(f"[System]角色{user_name}已经在墓地中，无法与活人交谈。")
 
+    # 调用大模型处理函数，传入 group_chatter 以便内部发送
+    await handle_llm_conversation(
+        group_chatter=group_chatter,
+        group_id=group_id,
+        user_id=user_id,
+        user_info=user_info,
+        status=status,
+        tools=tools,
+        prompt=prompt,
+        _poke=_poke,
+        username=username
+    )
+
+    # 总结历史，缩短上下文
+    await summarize_history(group_id)
+
+    THREAD_LOCKER = True
+
+
+async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, status, tools, prompt, _poke, username):
+    """
+    处理与 LLM 的交互，包括首次调用和后续的 function_call 循环。
+    内部直接使用 group_chatter 发送消息。
+    """
+    # 首次调用
+    thought, response, feedback, finish_reason, function = await send_chat(
+        prompt, group_id, user_info, status, tools
+    )
     print(f"Thought: {thought}")
-    emoji_file = check_emotion(user_id, response)
-    print(emoji_file)
-    if not emoji_file == "":
-        await group_chatter.send(MessageSegment.image(file=emoji_file) + f"{remove_emotion(response)}")
-        if AUDIO_SWITCH:
-            if TRANSLATE_SWITCH:
-                voice_file_name = voice_generate(get_translation(remove_action(remove_emotion(response)), "jp"),
-                                                 lang="auto", format="silk")
-            else:
-                voice_file_name = voice_generate(remove_action(remove_emotion(response)), lang="zh", format="silk")
-            await group_chatter.send(MessageSegment.audio(path=voice_file_name))
-    else:
-        if not remove_emotion(response) == "":
-            await group_chatter.send(f"{remove_emotion(response)}")
-            if AUDIO_SWITCH:
-                if TRANSLATE_SWITCH:
-                    voice_file_name = voice_generate(get_translation(remove_action(remove_emotion(response)), "jp"),
-                                                     lang="auto", format="silk")
-                else:
-                    voice_file_name = voice_generate(remove_action(remove_emotion(response)), lang="zh", format="silk")
-                await group_chatter.send(MessageSegment.audio(path=voice_file_name))
-        else:
-            await group_chatter.send("...")
+
+    # 检查是否需要静默回复
+    if "[SILENCE]" in response:
+        # 移除 [SILENCE] 标记，保留前面的内容（如果有）
+        clean_response = response.replace("[SILENCE]", "").strip()
+        if clean_response:
+            await _send_response(group_chatter, user_id, clean_response)
+        # 无论是否发送内容，都不再继续后续的 function_call 循环
+        return
+
+    # 发送首次响应
+    await _send_response(group_chatter, user_id, response)
 
     steps = 0
     loop = 0
@@ -535,7 +526,8 @@ async def chat(event: Event):
                     subject = feedback[locator_left + 1:locator_right]
                     web_summary = await send_to_assistant(
                         feedback + f"\n\n在300字以内总结上面关于\"{subject}\"的搜索结果，输出时尽量总结成单个段落：",
-                        group_id, type=1)
+                        group_id, type=1
+                    )
                     observation = f"（爱丽丝在网络上对\"{subject}\"进行了一番搜索，得到了下面的信息）{web_summary}"
                 else:
                     observation = feedback
@@ -559,8 +551,7 @@ async def chat(event: Event):
                         tools = move_tool(steps, feedback, 0)
                         desc = tools[0]["parameters"]["properties"]["options"]["description"]
                         school = get_school(feedback)
-                        await group_chatter.send(
-                            f"[System]爱丽丝抵达了{school.school_name}的外围，正在考虑去往哪个区域。")
+                        await group_chatter.send(f"[System]爱丽丝抵达了{school.school_name}的外围，正在考虑去往哪个区域。")
                         observation = f"你抵达了{school.school_name}的外围，正在考虑去往哪个区域。你应该使用decide_area能力决定要前往的区域。\n{desc}"
                     elif steps == 1:
                         steps -= 1
@@ -579,12 +570,32 @@ async def chat(event: Event):
                 await group_chatter.send(f"[System]{feedback}")
                 observation = feedback
 
-        thought, response, feedback, finish_reason, function = await send_feedback(observation, group_id, tools)
+        # 调用反馈
+        thought, response, feedback, finish_reason, function = await send_feedback(
+            observation, group_id, tools
+        )
         print(f"Thought: {thought}")
-        emoji_file = check_emotion(user_id, response)
-        print(emoji_file)
-        if not emoji_file == "":
-            await group_chatter.send(MessageSegment.image(file=emoji_file) + f"{remove_emotion(response)}")
+
+        # 发送响应
+        await _send_response(group_chatter, user_id, response)
+
+
+async def _send_response(group_chatter, user_id, response):
+    """发送响应消息，包含表情图片和语音（如果开关开启）"""
+    emoji_file = check_emotion(user_id, response)
+    print(emoji_file)
+    if not emoji_file == "":
+        await group_chatter.send(MessageSegment.image(file=emoji_file) + f"{remove_emotion(response)}")
+        if AUDIO_SWITCH:
+            if TRANSLATE_SWITCH:
+                voice_file_name = voice_generate(get_translation(remove_action(remove_emotion(response)), "jp"),
+                                                 lang="auto", format="silk")
+            else:
+                voice_file_name = voice_generate(remove_action(remove_emotion(response)), lang="zh", format="silk")
+            await group_chatter.send(MessageSegment.audio(path=voice_file_name))
+    else:
+        if not remove_emotion(response) == "":
+            await group_chatter.send(f"{remove_emotion(response)}")
             if AUDIO_SWITCH:
                 if TRANSLATE_SWITCH:
                     voice_file_name = voice_generate(get_translation(remove_action(remove_emotion(response)), "jp"),
@@ -593,24 +604,7 @@ async def chat(event: Event):
                     voice_file_name = voice_generate(remove_action(remove_emotion(response)), lang="zh", format="silk")
                 await group_chatter.send(MessageSegment.audio(path=voice_file_name))
         else:
-            if not remove_emotion(response) == "":
-                await group_chatter.send(f"{remove_emotion(response)}")
-                if AUDIO_SWITCH:
-                    if TRANSLATE_SWITCH:
-                        voice_file_name = voice_generate(get_translation(remove_action(remove_emotion(response)), "jp"),
-                                                         lang="auto", format="silk")
-                    else:
-                        voice_file_name = voice_generate(remove_action(remove_emotion(response)), lang="zh",
-                                                         format="silk")
-                    await group_chatter.send(MessageSegment.audio(path=voice_file_name))
-            else:
-                await group_chatter.send("...")
-
-    # 总结历史，缩短上下文
-    await summarize_history(group_id)
-    # if feedback != "":
-    #     await group_chatter.send(f"System<{feedback}>")
-    THREAD_LOCKER = True
+            await group_chatter.send("...")
 
 
 @clear_memory.handle()
