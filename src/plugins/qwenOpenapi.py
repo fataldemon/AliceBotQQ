@@ -9,7 +9,6 @@ from datetime import datetime
 from src.function.function_call import skill_call
 from src.plugins.dataset_collection import create_first_conversation, create_conversation, get_json
 from langchain.llms.base import LLM
-from src.plugins.emotion import remove_emotion
 
 logging.basicConfig(level=logging.INFO)
 
@@ -44,7 +43,6 @@ class Qwen(LLM):
     top_p: float = 0.7
     top_k: int = None
     repetition_penalty: float = None
-    presence_penalty: float = None
     system: str = ""
     max_history = 20
     embedding_buffer = []
@@ -137,8 +135,6 @@ class Qwen(LLM):
         }
         if self.repetition_penalty is not None:
             query["repetition_penalty"] = self.repetition_penalty
-        if self.presence_penalty is not None:
-            query["repetition_penalty"] = self.presence_penalty
         if self.top_k is not None:
             query["top_k"] = self.top_k
         # 查找提示信息的位置，不加入历史
@@ -366,14 +362,7 @@ class Qwen(LLM):
                 print(f"查到的设定信息编号为：{self.embedding_buffer}")
                 self.conversations.append(create_conversation(
                     {"role": "assistant", "content": f"Thought: {thought}\nFinal Answer: {predictions}"}))
-                # 检查是否需要静默回复（如果完全静默则不加入历史）
-                if "[SILENCE]" in predictions:
-                    # 移除 [SILENCE] 标记，保留前面的内容（如果有）
-                    clean_predictions = predictions.replace("[SILENCE]", "").strip()
-                    if remove_emotion(clean_predictions):
-                        self.history += [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{clean_predictions}")]
-                else:
-                    self.history += [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
+                self.history += [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
 
                 return thought, predictions, "", finish_reason, ""
         else:
