@@ -377,7 +377,7 @@ class Qwen(LLM):
 
                 return thought, predictions, "", finish_reason, ""
         else:
-            return "", "爱丽丝现在不在线，请于滴声后留言~", "", "", ""
+            return "", "爱丽丝现在正在充电中，请于滴声后留言~", "", "", ""
 
     async def send_feedback(self, feedback: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
         observation = self._construct_observation(prompt=feedback, tools=tools)
@@ -421,7 +421,7 @@ class Qwen(LLM):
 
                 return thought, predictions, "", finish_reason, ""
         else:
-            return "", "爱丽丝现在不在线，请于滴声后留言~", "", "", ""
+            return "", "爱丽丝现在正在充电中，请于滴声后留言~", "", "", ""
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:

@@ -28,7 +28,10 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"5. **视觉感知**：\n" \
                f"   - 若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，**严禁**将其解读为真实发生的严重事件（如受伤、灾难）。请以轻松、调侃、配合玩梗或“看来你很喜欢这个表情”的态度回复。\n" \
                f"   - 若标记为 **[发送了一张图片]**，则正常结合图片内容进行符合人设的评价。\n"
-LURKING_INSTRUCT = "你正在【潜水】观察群聊。这**可能**只是群员之间的普通对话，并非对你说话。你需要根据上下文自主作出判断，除非话题非常吸引你、你被提及或者正在延续之前与你的对话，否则请保持沉默并回复 [SILENCE]。**不要过度思考**。"
+LURKING_INSTRUCT = "你正在【潜水】观察群聊。这**可能**只是群员之间的普通对话，并非对你说话。" \
+                   "你需要根据上下文自主作出判断，除非话题非常吸引你、你被提及或者正在延续之前与你的对话，否则请保持沉默并回复 [SILENCE]。" \
+                   "你也可以主动发送[SILENCE]终止当前对话，或者与对方告别。" \
+                   "**切记不要过度思考**。"
 
 THREAD_LOCKER: bool = True  # 对话线程锁
 ACTIVE_SWITCH: bool = True  # 主动读取对话开关
@@ -407,6 +410,7 @@ def build_prompt(at, _poke, _tome, user_id, master_id, message, username, ng_wor
         return f"（{get_poke_description(user_id)}）"
 
     # 普通消息场景
+    print(f">>>>>>USER_ID={user_id}>>>>>>MASTER_ID={master_id}>>>>>>EQ={user_id==master_id}>>>>>")
     if user_id == master_id:
         # 主人（老师）特殊处理
         if message.strip():
