@@ -8,8 +8,8 @@ from src.dao.status import master_id
 # 创建一个基类，用于声明类定义
 Base = declarative_base()
 
-data_query = on_command("查询所有用户")
-self_query = on_command("查询状态")
+data_query = on_command("查询所有用户", block=True)
+self_query = on_command("查询状态", block=True)
 
 
 class User(Base):
@@ -110,7 +110,8 @@ def get_favor_description(favor: float, user_name: str) -> str:
 
 def get_poke_description(user_id: str) -> str:
     if user_id is not None and user_id != "":
-        if user_id != master_id:
+        print(f">>>>>USER_ID={user_id}<<<<<>>>>>MASTER_ID={master_id}<<<<<>>>>>>EQ={master_id==user_id}<<<<<")
+        if str(user_id) != str(master_id):
             user = query_user(user_id)
             favor = user.relation
             user_name = user.user_name

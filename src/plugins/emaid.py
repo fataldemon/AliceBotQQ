@@ -7,7 +7,7 @@ from nonebot import on_command
 from nonebot.adapters.onebot.v11.message import Message, MessageSegment
 from nonebot.adapters.onebot.v11.event import Event, MessageEvent, NotifyEvent, PokeNotifyEvent
 from src.plugins.chatglmOpenapi import ChatGLM
-from src.plugins.qwenOpenapi import Qwen
+from src.plugins.qwenOpenapi import Qwen, SLEEP_INFORMATION
 from src.plugins.emotion import remove_emotion, check_emotion
 from src.plugins.voice import remove_action, get_translation, voice_generate
 from src.plugins.image_process import get_pic_desc, recent_img_buffer
@@ -19,8 +19,8 @@ from src.function.function_call import get_general_tools, move_tool
 
 CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"1. **身份一致性**：你必须完全沉浸在上述角色设定中。严禁提及你是 AI、机器人、程序 or 语言模型。严禁以 AI 助手的语气说话。\n" \
-               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述，尽量在80个汉字以内。但在复述十分具有专业性和科学性的内容时，可以允许长篇大论。\n" \
-               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者，绝不能认为对方是在对你说话。此时应尽量保持沉默，除非你确信有必要插话。\n" \
+               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述，尽量在80个汉字以内，但在复述、或者论述十分具有专业性和科学性的内容时，可以放宽要求到400字。\n" \
+               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者，绝不能认为对方是在对你说话。如果你对话题感兴趣、或者确信话题与你有关，可以选择插话，否则应尽量保持沉默。\n" \
                f"4. **互动决策**：\n" \
                f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 **[SILENCE]**。\n" \
                f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的知识，可以积极地使用**search_on_internet**的工具能力检索相关知识。查到的信息会被自动存储入知识库中，因此也应当避免检索无意义的信息。\n" \
@@ -29,8 +29,8 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，**严禁**将其解读为真实发生的严重事件（如受伤、灾难）。请以轻松、调侃、配合玩梗或“看来你很喜欢这个表情”的态度回复。\n" \
                f"   - 若标记为 **[发送了一张图片]**，则正常结合图片内容进行符合人设的评价。\n"
 LURKING_INSTRUCT = "你正在【潜水】观察群聊。这**可能**只是群员之间的普通对话，并非对你说话。" \
-                   "你需要根据上下文自主作出判断，除非话题非常吸引你、你被提及或者正在延续之前与你的对话，否则请保持沉默并回复 [SILENCE]。" \
-                   "你也可以主动发送[SILENCE]终止当前对话，或者与对方告别。" \
+                   "你需要根据上下文自主作出判断，除非话题吸引你、你被提及或者正在延续此前与你有关的对话，否则请保持沉默并回复 [SILENCE]。" \
+                   "你也可以主动发送[SILENCE]终止当前对话或者与对方告别。" \
                    "**切记不要过度思考**。"
 
 THREAD_LOCKER: bool = True  # 对话线程锁
@@ -60,11 +60,13 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.95, top_p=0.7, functions=tools, repetition_penalty=1.10, max_history=12)
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
-            temperature=0.9,
+            temperature=1.0,
             top_p=0.9,
             top_k=20,
-            max_history=30,
-            repetition_penalty=1.0
+            max_history=12,
+            repetition_penalty=1.0,
+            presence_penalty=1.1,
+            enable_thinking=True
         )
         llm_list[group_id] = llm
         return llm
@@ -128,7 +130,7 @@ group_chatter = on_message(rule=_checker, priority=2, block=False)
 poke_reply = on_notice(rule=_poke_checker, priority=2)
 clear_memory = on_command("forget", rule=_checker, priority=3)
 voice_switch = on_command("语音开关")
-active_switch = on_command("主动模式", block=True)
+active_switch = on_command("活跃模式", block=True)
 thread_lock = on_command("线程锁", block=True)
 black_list = on_command("blacklist ")
 unblack_list = on_command("unblacklist ")
@@ -266,10 +268,10 @@ async def turn_active(event: MessageEvent):
     if user_id == master_id:
         if ACTIVE_SWITCH:
             ACTIVE_SWITCH = False
-            await voice_switch.send("主动模式关闭")
+            await voice_switch.send("活跃模式关闭")
         else:
             ACTIVE_SWITCH = True
-            await voice_switch.send("主动模式启动")
+            await voice_switch.send("活跃模式启动")
     else:
         await voice_switch.send("权限不足")
 
@@ -475,7 +477,7 @@ async def chat(event: Event):
     # 获取呼叫用户名(戳一戳和普通消息)
     if isinstance(event, PokeNotifyEvent):
         _poke, _pokee, _poker = True, event.target_id, event.user_id
-        _tome = False
+        _tome = True
         user_id = _poker
         at = ""
     else:
@@ -535,8 +537,10 @@ async def chat(event: Event):
     await save_message_buffer(group_id, prompt)
     # 线程锁，只有在开放时才进入，进入后关闭线程锁，保证同时只有线程进入
     while not THREAD_LOCKER:
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.1)
     THREAD_LOCKER = False
+    # 等待0.5秒，让同时消息进来
+    await asyncio.sleep(0.5)
     # 从缓冲区按顺序取出消息，然后清空缓冲区
     if message_buffer.get(group_id) is not None and len(message_buffer.get(group_id)) != 0:
         for pre_message in message_buffer.get(group_id):
@@ -548,16 +552,16 @@ async def chat(event: Event):
         THREAD_LOCKER = True
         return
 
+    tips = ""
     if _tome:
-        # 敏感词检测
-        bad_words = ""
-        for bad_word in ng_words:
-            if bad_word in message:
-                bad_words += bad_word + "，"
-        if bad_words:
-            tips = f"\n（提示：{bad_words}这是非常粗俗的词语，是不应该对孩子说的话。使用这样词语的人必须用光之剑sword_of_light教训一顿。）"
-        else:
-            tips = ""
+        if not _poke:
+            # 敏感词检测
+            bad_words = ""
+            for bad_word in ng_words:
+                if bad_word in message:
+                    bad_words += bad_word + "，"
+            if bad_words:
+                tips = f"\n（提示：{bad_words}这是非常粗俗的词语，是不应该对孩子说的话。使用这样词语的人必须用光之剑sword_of_light教训一顿。）"
     else:
         tips = f"\n（提示：{LURKING_INSTRUCT})"
 
@@ -591,7 +595,9 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
     )
     print(f"Thought: {thought}")
 
-    # 检查是否需要静默回复
+    # 检查是否需要静默回复（活跃模式时，如果发生报错就静默）
+    if (response == SLEEP_INFORMATION) and ACTIVE_SWITCH:
+        response = "[SILENCE]"
     if "[SILENCE]" in response:
         # 移除 [SILENCE] 标记，保留前面的内容（如果有）
         clean_response = response.replace("[SILENCE]", "").strip()

@@ -13,6 +13,8 @@ from src.plugins.emotion import remove_emotion
 
 logging.basicConfig(level=logging.INFO)
 
+SLEEP_INFORMATION = "【睡觉】（爱丽丝正在充电中，请于滴声后留言~）"
+
 
 def get_value_in_brackets(tool_call):
     pattern = r'\((.*?)\)'
@@ -46,6 +48,7 @@ class Qwen(LLM):
     repetition_penalty: float = None
     presence_penalty: float = None
     system: str = ""
+    enable_thinking = True
     max_history = 20
     embedding_buffer = []
     history: Any = []
@@ -83,9 +86,9 @@ class Qwen(LLM):
             # 存储数据集
             self.record_dialog_in_file(get_json(self.conversations, ""))
             # temp_history = self.history[-self.max_history:]
-            int_index = 8
-            while self.history[-int_index]["role"] != "user":
-                int_index += 2
+            int_index = 4
+            # while self.history[-int_index]["role"] != "user":
+            #     int_index += 1
             await self.conclude_summary(int_index)
             print(f"历史总结：{self.summary}")
             user_content = self.history[-int_index:][0]["content"]
@@ -130,6 +133,7 @@ class Qwen(LLM):
             "messages": messages,
             "information": f"{embedding}\n{status}",
             "on_embedding": True,
+            "enable_thinking": self.enable_thinking,
             "embeddings_buffer": self.embedding_buffer,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -250,7 +254,7 @@ class Qwen(LLM):
             predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
             return predictions
         else:
-            return "爱丽丝现在不在线，请于滴声后留言~"
+            return SLEEP_INFORMATION
 
     async def call_assistant(self, prompt: str, get_think: bool = False, tools=[], type: int = 0,
                              stop: Optional[List[str]] = None, **kwargs) -> str:
@@ -287,7 +291,7 @@ class Qwen(LLM):
                     predictions = reply
             return predictions
         else:
-            return "爱丽丝现在不在线，请于滴声后留言~"
+            return SLEEP_INFORMATION
 
     async def conclude_summary(self, cut_point) -> str:
         if self.summary != "":
@@ -322,13 +326,16 @@ class Qwen(LLM):
             resp = self._post(url=self.url, query=query)
         except requests.exceptions.ConnectionError:
             self.history = self.history[:-1]
-            return "", "爱丽丝现在不在线，请于滴声后留言~", "", "", ""
+            return "", SLEEP_INFORMATION, "", "", ""
         if resp.status_code == 200:
             resp_json = json.loads(resp.text)
             finish_reason = resp_json['choices'][0]['finish_reason']
+            predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
+            thought = resp_json['choices'][0]['thought'].strip()
+            if finish_reason == "overthink":
+                # 如果过度思考就不给思考过程了
+                return "", predictions, "", finish_reason, ""
             if finish_reason == "function_call":
-                predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
-                thought = resp_json['choices'][0]['thought'].strip()
                 action = resp_json['choices'][0]['message']['function_call']
                 action_name = action['name']
                 action_input = action['arguments']
@@ -360,8 +367,6 @@ class Qwen(LLM):
                 print(f"历史长度：{len(self.history)}")
                 return thought, predictions, feedback, finish_reason, action_name
             else:
-                predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
-                thought = resp_json['choices'][0]['thought'].strip()
                 self.embedding_buffer = resp_json['choices'][0]['embedding_list']
                 print(f"查到的设定信息编号为：{self.embedding_buffer}")
                 self.conversations.append(create_conversation(
@@ -377,7 +382,7 @@ class Qwen(LLM):
 
                 return thought, predictions, "", finish_reason, ""
         else:
-            return "", "爱丽丝现在正在充电中，请于滴声后留言~", "", "", ""
+            return "", SLEEP_INFORMATION, "", "", ""
 
     async def send_feedback(self, feedback: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
         observation = self._construct_observation(prompt=feedback, tools=tools)
@@ -421,7 +426,7 @@ class Qwen(LLM):
 
                 return thought, predictions, "", finish_reason, ""
         else:
-            return "", "爱丽丝现在正在充电中，请于滴声后留言~", "", "", ""
+            return "", SLEEP_INFORMATION, "", "", ""
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:
