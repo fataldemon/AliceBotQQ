@@ -9,7 +9,7 @@ from src.dao.status import master_id, bot_id
 
 ocr_url = "http://127.0.0.1:12345/func/ocr"
 glm_url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-glm_key = "a1118ed6d2054308060ca13ca9d20151.YCELx80j8e7TXu9r"
+glm_key = ""
 img_url_buffer = {}
 # 这是一个字典，key为群组号group_id，value为另外一个字典类，分别有user、url、subtype、description和timestamp四个key，对应用户名、图片url、图片类型、描述和时间戳
 recent_img_buffer = {}

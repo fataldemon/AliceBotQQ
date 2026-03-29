@@ -1,19 +1,23 @@
-import os.path
-import time
-import logging
-import requests
 import json
-from typing import Optional, List, Dict, Mapping, Any
+import logging
+import os.path
 import re
+import time
 from datetime import datetime
+from typing import Optional, List, Dict, Mapping, Any
+
+import aiohttp
+import requests
+from langchain.llms.base import LLM
+
 from src.function.function_call import skill_call
 from src.plugins.dataset_collection import create_first_conversation, create_conversation, get_json
-from langchain.llms.base import LLM
 from src.plugins.emotion import remove_emotion
 
 logging.basicConfig(level=logging.INFO)
 
 SLEEP_INFORMATION = "【睡觉】（爱丽丝正在充电中，请于滴声后留言~）"
+OVERTHINK_INFORMATION = "【思考】（爱丽丝看着群里的消息，若有所思）...[SILENCE]"
 
 
 def get_value_in_brackets(tool_call):
@@ -42,16 +46,19 @@ def build_multi_modal_message(role: str, content: str) -> list:
 
 
 class Qwen(LLM):
+    # 大模型参数表：
     temperature: float = 0.95
     top_p: float = 0.7
     top_k: int = None
     repetition_penalty: float = None
     presence_penalty: float = None
     system: str = ""
-    enable_thinking = True
-    max_history = 20
-    embedding_buffer = []
-    history: Any = []
+    enable_thinking = True  # 是否启用思考模式
+    max_history = 20  # 历史长度上限
+    embedding_buffer = []  # 存储服务端上次查询到的知识库嵌入条目的序号
+    # 处理中的消息的内容、用户名、时间戳和请求ID，格式应为{"prompt": "", "user_id": "", "timestamp": None, "request_id": ""}
+    processing_cache: Dict = None
+    history: Any = []  # 历史信息
     conversations = []
     summary = ""
     functions = []
@@ -98,23 +105,39 @@ class Qwen(LLM):
 
         print(f"历史长度：{len(self.history)}")
 
+    # 判断打断条件
+    def check_interruption(self, user_id) -> bool:
+        if self.processing_cache is not None and self.processing_cache.get("user_id") == user_id:
+            time_diff = datetime.now() - self.processing_cache.get("timestamp")
+            if time_diff.seconds < 8:
+                return True
+        return False
+
+    def check_async_processing(self):
+        if self.processing_cache is not None:
+            return True
+        else:
+            return False
+
     def _construct_query(self, prompt: str, tools, **kwargs) -> Dict:
         """构造请求体
         """
         embedding = []
         status = ""
+        request_id = ""
+        abort_id = None
         for key, value in kwargs.items():
             if key == "embedding":
                 embedding = value
             elif key == "status":
                 status = value
+            elif key == "request_id":
+                request_id = value
+            elif key == "abort_id":
+                abort_id = value
         prompt = prompt.replace("\n（提示：）", "")
 
         time_diff = datetime.now() - self.last_reply
-        # 首条消息附上群组名
-        # if self.history == []:
-        #     prompt = f"（在群组名为“{self.group_name}”的QQ群中）\n{prompt}"
-        # 若时间超过10分钟就描述时间的流逝
         if self.history != [] and time_diff.seconds > 10 * 60:
             if time_diff.seconds < 60 * 60:
                 minutes_diff = time_diff.seconds // 60
@@ -124,6 +147,7 @@ class Qwen(LLM):
                 # 存储数据集
                 self.record_dialog_in_file(get_json(self.conversations, ""))
 
+        print(f">>>>>>REQUEST_ID={request_id}<<<<<<<<<")
         messages = self.history + [build_multi_modal_message("user", prompt)]
         query = {
             "character": "tendou_arisu",
@@ -137,6 +161,7 @@ class Qwen(LLM):
             "embeddings_buffer": self.embedding_buffer,
             "temperature": self.temperature,
             "top_p": self.top_p,
+            "request_id": request_id,
             "stream": False,  # 不启用流式API
         }
         if self.repetition_penalty is not None:
@@ -145,6 +170,8 @@ class Qwen(LLM):
             query["repetition_penalty"] = self.presence_penalty
         if self.top_k is not None:
             query["top_k"] = self.top_k
+        if abort_id is not None:
+            query["abort_id"] = abort_id
         # 查找提示信息的位置，不加入历史
         tip_p = prompt.rfind("\n（提示：")
         if tip_p >= 0:
@@ -153,12 +180,15 @@ class Qwen(LLM):
             raw_prompt = prompt
 
         # 格式化数据集
-        if self.history == []:
+        if not self.history:
             self.conversations.append(
                 create_first_conversation({"role": "user", "content": raw_prompt}, self.functions))
         else:
             self.conversations.append(create_conversation({"role": "user", "content": raw_prompt}))
         self.history = self.history + [build_multi_modal_message("user", raw_prompt)]
+        # 存入历史之后就把缓存区的prompt清空，防止重复读取
+        if self.processing_cache is not None:
+            self.processing_cache["prompt"] = ""
 
         # 记录上次会话时间
         self.last_reply = datetime.now()
@@ -220,18 +250,16 @@ class Qwen(LLM):
         self.record_dialog_in_file(get_json(self.conversations, ""))
 
     @classmethod
-    def _post(cls, url: str, query: Dict) -> Any:
-        """POST请求
-        """
+    async def _post(cls, url: str, query: Dict) -> Any:
         _headers = {"Content-Type": "application/json"}
-        with requests.session() as sess:
-            resp = sess.post(
-                url,
-                headers=_headers,
-                json=query,
-                timeout=120,
-            )
-        return resp
+        timeout = aiohttp.ClientTimeout(total=120)  # 设置总超时
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=_headers, json=query, timeout=timeout) as resp:
+                if resp.status == 200:
+                    return await resp.json()  # 直接返回 JSON
+                else:
+                    # 处理错误，可能抛出异常或返回错误信息
+                    raise Exception(f"HTTP {resp.status}")
 
     async def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs):
         """调用函数
@@ -247,13 +275,11 @@ class Qwen(LLM):
         query = self._construct_query(prompt=prompt, embedding=embedding, status=status)
         # self.record_dialog_in_file(role="user", content=prompt)
         # post
-        resp = self._post(url=self.url_assistant, query=query)
-        if resp.status_code == 200:
-            resp_json = json.loads(resp.text)
-
+        resp_json = await self._post(url=self.url_assistant, query=query)
+        try:
             predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
             return predictions
-        else:
+        except Exception:
             return SLEEP_INFORMATION
 
     async def call_assistant(self, prompt: str, get_think: bool = False, tools=[], type: int = 0,
@@ -272,10 +298,8 @@ class Qwen(LLM):
                                                 type=type)
         # self.record_dialog_in_file(role="user", content=prompt)
         # post
-        resp = self._post(url=self.url_assistant, query=query)
-        if resp.status_code == 200:
-            resp_json = json.loads(resp.text)
-
+        resp_json = await self._post(url=self.url_assistant, query=query)
+        try:
             predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
             if "<think>" in predictions and "</think>" in predictions:
                 index_t = predictions.rfind("</think>\n\n")
@@ -290,7 +314,7 @@ class Qwen(LLM):
                 else:
                     predictions = reply
             return predictions
-        else:
+        except Exception:
             return SLEEP_INFORMATION
 
     async def conclude_summary(self, cut_point) -> str:
@@ -309,9 +333,22 @@ class Qwen(LLM):
         self.summary = await self.call_assistant(summary_prompt)
         return self.summary
 
-    async def call_with_function(self, prompt: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
+    async def call_with_function(self, prompt: str, user_id: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
         """调用函数
         """
+        # 如果有正在处理的请求（既然已经进来了），就送去abort_id进行终止
+        abort_id = None
+        if self.processing_cache is not None:
+            abort_id = self.processing_cache["request_id"]
+            prompt = f"{self.processing_cache['prompt']}\n{prompt}"
+            self.processing_cache = None
+        # 生成请求ID
+        timestamp = datetime.now()
+        request_id = f"{timestamp.strftime('%Y%m%d%H%M%S')}{user_id}"
+
+        # 进入缓存processing_cache，表示该请求正在处理
+        self.processing_cache = {"prompt": prompt, "user_id": user_id, "timestamp": timestamp, "request_id": request_id}
+
         embedding = []
         status = ""
         for key, value in kwargs.items():
@@ -320,21 +357,33 @@ class Qwen(LLM):
             elif key == "status":
                 status = value
         # construct query
-        query = self._construct_query(prompt=prompt, embedding=embedding, status=status, tools=tools)
+        query = self._construct_query(
+            prompt=prompt,
+            embedding=embedding,
+            status=status,
+            tools=tools,
+            request_id=request_id,
+            abort_id=abort_id
+        )
         # self.record_dialog_in_file(role="user", content=prompt)
         try:
-            resp = self._post(url=self.url, query=query)
-        except requests.exceptions.ConnectionError:
-            self.history = self.history[:-1]
+            resp_json = await self._post(url=self.url, query=query)
+        except aiohttp.ClientError:
+            # self.history = self.history[:-1]
+            self.processing_cache = None  # 清空缓存，避免重复生成历史数据
             return "", SLEEP_INFORMATION, "", "", ""
-        if resp.status_code == 200:
-            resp_json = json.loads(resp.text)
+        try:
             finish_reason = resp_json['choices'][0]['finish_reason']
+            print(f">>>>>FINISH_REASON = {finish_reason}<<<<<<")
             predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
             thought = resp_json['choices'][0]['thought'].strip()
+            # 如果过度思考就不给思考过程了
             if finish_reason == "overthink":
-                # 如果过度思考就不给思考过程了
-                return "", predictions, "", finish_reason, ""
+                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
+                return "", OVERTHINK_INFORMATION, "", finish_reason, ""
+            if finish_reason == "abort":
+                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
+                return "", "[SILENCE]", "", finish_reason, ""
             if finish_reason == "function_call":
                 action = resp_json['choices'][0]['message']['function_call']
                 action_name = action['name']
@@ -363,7 +412,7 @@ class Qwen(LLM):
                                                                    "content": f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"}))
                     tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
                     self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
-
+                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
                 print(f"历史长度：{len(self.history)}")
                 return thought, predictions, feedback, finish_reason, action_name
             else:
@@ -379,16 +428,15 @@ class Qwen(LLM):
                         self.history += [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{clean_predictions}")]
                 else:
                     self.history += [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
-
+                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
                 return thought, predictions, "", finish_reason, ""
-        else:
+        except Exception:
             return "", SLEEP_INFORMATION, "", "", ""
 
     async def send_feedback(self, feedback: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
         observation = self._construct_observation(prompt=feedback, tools=tools)
-        resp = self._post(url=self.url, query=observation)
-        if resp.status_code == 200:
-            resp_json = json.loads(resp.text)
+        resp_json = await self._post(url=self.url, query=observation)
+        try:
             finish_reason = resp_json['choices'][0]['finish_reason']
             if finish_reason == "function_call":
                 predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
@@ -425,7 +473,7 @@ class Qwen(LLM):
                 self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
 
                 return thought, predictions, "", finish_reason, ""
-        else:
+        except Exception:
             return "", SLEEP_INFORMATION, "", "", ""
 
     @property

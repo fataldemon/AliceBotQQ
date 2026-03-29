@@ -141,7 +141,7 @@ conclude_summary = on_command("总结历史")
 group_message = on_message(rule=_none_checker, priority=1, block=False)
 
 
-async def send_chat(prompt: str, group_id: str, embedding, status: str, tools) -> tuple:
+async def send_chat(prompt: str, group_id: str, user_id: str, embedding, status: str, tools) -> tuple:
     """
     通过接口向LLM发送聊天
     :param embedding: 附加知识内容
@@ -152,6 +152,7 @@ async def send_chat(prompt: str, group_id: str, embedding, status: str, tools) -
     llm = getLLM(group_id)
     thought, response, feedback, finish_reason, function = await llm.call_with_function(
         prompt,
+        user_id=user_id,
         stop=None,
         embedding=CORE_COMMAND + "\n\n" + embedding,
         status=status,
@@ -163,6 +164,18 @@ async def send_chat(prompt: str, group_id: str, embedding, status: str, tools) -
 async def summarize_history(group_id: str):
     llm = getLLM(group_id)
     await llm.shorten_history()
+
+
+# 检查该群组的打断条件
+def check_interruption(group_id: str, user_id: str) -> bool:
+    llm = getLLM(group_id)
+    return llm.check_interruption(user_id)
+
+
+# 检查该群组是否有正在进行中的异步任务
+def check_async_task(group_id: str) -> bool:
+    llm = getLLM(group_id)
+    return llm.check_async_processing()
 
 
 async def send_to_assistant(prompt: str, group_id: str, tools=[], get_think: bool = False, type: int = 0) -> tuple:
@@ -412,7 +425,7 @@ def build_prompt(at, _poke, _tome, user_id, master_id, message, username, ng_wor
         return f"（{get_poke_description(user_id)}）"
 
     # 普通消息场景
-    print(f">>>>>>USER_ID={user_id}>>>>>>MASTER_ID={master_id}>>>>>>EQ={user_id==master_id}>>>>>")
+    print(f">>>>>>USER_ID={user_id}>>>>>>MASTER_ID={master_id}>>>>>>EQ={user_id == master_id}>>>>>")
     if user_id == master_id:
         # 主人（老师）特殊处理
         if message.strip():
@@ -476,9 +489,8 @@ async def chat(event: Event):
     print(f">>>>>>>>>>>>>>>>>线程锁状态{THREAD_LOCKER}<<<<<<<<<<<<<")
     # 获取呼叫用户名(戳一戳和普通消息)
     if isinstance(event, PokeNotifyEvent):
-        _poke, _pokee, _poker = True, event.target_id, event.user_id
+        _poke, _pokee, user_id = True, event.target_id, event.user_id
         _tome = True
-        user_id = _poker
         at = ""
     else:
         _poke = False
@@ -537,6 +549,9 @@ async def chat(event: Event):
     await save_message_buffer(group_id, prompt)
     # 线程锁，只有在开放时才进入，进入后关闭线程锁，保证同时只有线程进入
     while not THREAD_LOCKER:
+        # 例外：判断是否满足打断条件 1.相同用户在同一群组下发送消息；2.间隔不超过8秒
+        if check_interruption(group_id=group_id, user_id=user_id):
+            break
         await asyncio.sleep(0.1)
     THREAD_LOCKER = False
     # 等待0.5秒，让同时消息进来
@@ -547,8 +562,8 @@ async def chat(event: Event):
             pre_messages += pre_message + "\n"
         message_buffer[group_id] = []
 
+    # 如果缓冲区已经被取完就打开线程锁，退出线程
     if pre_messages == "":
-        # 打开线程锁
         THREAD_LOCKER = True
         return
 
@@ -580,8 +595,9 @@ async def chat(event: Event):
 
     # 总结历史，缩短上下文
     await summarize_history(group_id)
-    # 打开线程锁
-    THREAD_LOCKER = True
+    # 打开线程锁（但如果有打断消息则作不处理，持续保持线程锁状态）
+    if not check_async_task(group_id):
+        THREAD_LOCKER = True
 
 
 async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, status, tools, prompt, _poke, username):
@@ -591,7 +607,7 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
     """
     # 首次调用
     thought, response, feedback, finish_reason, function = await send_chat(
-        prompt, group_id, user_info, status, tools
+        prompt=prompt, group_id=group_id, user_id=user_id, embedding=user_info, status=status, tools=tools
     )
     print(f"Thought: {thought}")
 
