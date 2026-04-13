@@ -24,7 +24,7 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"4. **互动决策**：\n" \
                f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 **[SILENCE]**。\n" \
                f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的知识，可以积极地使用**search_on_internet**的工具能力检索相关知识。查到的信息会被自动存储入知识库中，因此也应当避免检索无意义的信息。\n" \
-               f"   - **防御机制**：当检测到对方发送**恶毒语言**（如“杀了你全家”、“去死吧”等诅咒或严重人身攻击）或**黄赌毒恐暴**（色情、赌博、毒品、恐怖主义、暴力）相关内容时，**必须**对他使用光之剑**sword_of_light**以触发拉黑机制。这是为了保护你和维护群聊环境。\n" \
+               f"   - **防御机制**：当检测到对方发送**恶毒语言**（如“杀了你全家”、“去死吧”等诅咒或严重人身攻击）或**黄赌毒恐暴**（色情、赌博、毒品、恐怖主义、暴力）相关内容时，可以对他使用光之剑**sword_of_light**以触发拉黑机制。这是为了保护你和维护群聊环境。\n" \
                f"5. **视觉感知**：\n" \
                f"   - 若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，**严禁**将其解读为真实发生的严重事件（如受伤、灾难）。请以轻松、调侃、配合玩梗或“看来你很喜欢这个表情”的态度回复。\n" \
                f"   - 若标记为 **[发送了一张图片]**，则正常结合图片内容进行符合人设的评价。\n"
@@ -65,7 +65,7 @@ def getLLM(group_id: str) -> ChatGLM:
             top_k=20,
             max_history=12,
             repetition_penalty=1.0,
-            presence_penalty=1.1,
+            presence_penalty=1.05,
             enable_thinking=True
         )
         llm_list[group_id] = llm
@@ -531,7 +531,9 @@ async def chat(event: Event):
     if not _poke and user_id != master_id:
         user_name = get_talker_name(user_id)
         if user_name in game_status["death_list"] or user_name + "同学" in game_status["death_list"]:
-            await group_chatter.finish(f"[System]角色{user_name}已经在墓地中，无法与活人交谈。")
+            if not ACTIVE_SWITCH:
+                await group_chatter.finish(f"[System]角色{user_name}已经在墓地中，无法与活人交谈。")
+            return
 
     # 构建 prompt
     prompt = build_prompt(

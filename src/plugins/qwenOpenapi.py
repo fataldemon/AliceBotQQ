@@ -99,7 +99,7 @@ class Qwen(LLM):
             await self.conclude_summary(int_index)
             print(f"历史总结：{self.summary}")
             user_content = self.history[-int_index:][0]["content"]
-            temp_history = [build_multi_modal_message("user", f"（{self.summary}）\n{user_content}")] + self.history[-int_index + 1:]
+            temp_history = [build_message("user", f"（{self.summary}）\n{user_content}")] + self.history[-int_index + 1:]
             self.history = temp_history
             print("Head of history: " + str(temp_history[0]))
 
@@ -148,7 +148,7 @@ class Qwen(LLM):
                 self.record_dialog_in_file(get_json(self.conversations, ""))
 
         print(f">>>>>>REQUEST_ID={request_id}<<<<<<<<<")
-        messages = self.history + [build_multi_modal_message("user", prompt)]
+        messages = self.history + [build_message("user", prompt)]
         query = {
             "character": "tendou_arisu",
             "functions": tools,
@@ -185,7 +185,7 @@ class Qwen(LLM):
                 create_first_conversation({"role": "user", "content": raw_prompt}, self.functions))
         else:
             self.conversations.append(create_conversation({"role": "user", "content": raw_prompt}))
-        self.history = self.history + [build_multi_modal_message("user", raw_prompt)]
+        self.history = self.history + [build_message("user", raw_prompt)]
         # 存入历史之后就把缓存区的prompt清空，防止重复读取
         if self.processing_cache is not None:
             self.processing_cache["prompt"] = ""
@@ -204,7 +204,7 @@ class Qwen(LLM):
                 embedding = value
             elif key == "status":
                 status = value
-        messages = [build_multi_modal_message("user", prompt)]
+        messages = [build_message("user", prompt)]
         query = {
             "functions": tools,
             "system": self.system,
@@ -225,7 +225,7 @@ class Qwen(LLM):
         for key, value in kwargs.items():
             if key == "embedding":
                 embedding = value
-        messages = self.history + [build_multi_modal_message("function", prompt)]
+        messages = self.history + [build_message("function", prompt)]
         query = {
             "functions": tools,
             "system": self.system,
@@ -277,7 +277,7 @@ class Qwen(LLM):
         # post
         resp_json = await self._post(url=self.url_assistant, query=query)
         try:
-            predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
+            predictions = resp_json['choices'][0]['message']['content'].strip()
             return predictions
         except Exception:
             return SLEEP_INFORMATION
@@ -300,7 +300,7 @@ class Qwen(LLM):
         # post
         resp_json = await self._post(url=self.url_assistant, query=query)
         try:
-            predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
+            predictions = resp_json['choices'][0]['message']['content'].strip()
             if "<think>" in predictions and "</think>" in predictions:
                 index_t = predictions.rfind("</think>\n\n")
                 if index_t != -1:
@@ -375,7 +375,7 @@ class Qwen(LLM):
         try:
             finish_reason = resp_json['choices'][0]['finish_reason']
             print(f">>>>>FINISH_REASON = {finish_reason}<<<<<<")
-            predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
+            predictions = resp_json['choices'][0]['message']['content'].strip()
             thought = resp_json['choices'][0]['thought'].strip()
             # 如果过度思考就不给思考过程了
             if finish_reason == "overthink":
@@ -398,20 +398,20 @@ class Qwen(LLM):
                         self.conversations.append(create_conversation({"role": "assistant",
                                                                        "content": f"Thought: {thought}\nAnswer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
                         tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                        self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
+                        self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
 
                     else:
                         # 格式化数据集
                         self.conversations.append(create_conversation({"role": "assistant",
                                                                        "content": f"Answer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
                         tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                        self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
+                        self.history = self.history + [build_message("assistant", f"<think>\n\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
                 else:
                     # 格式化数据集
                     self.conversations.append(create_conversation({"role": "assistant",
                                                                    "content": f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"}))
                     tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                    self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
+                    self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
                 self.processing_cache = None  # 清空缓存，避免重复生成历史数据
                 print(f"历史长度：{len(self.history)}")
                 return thought, predictions, feedback, finish_reason, action_name
@@ -425,9 +425,9 @@ class Qwen(LLM):
                     # 移除 [SILENCE] 标记，保留前面的内容（如果有）
                     clean_predictions = predictions.replace("[SILENCE]", "").strip()
                     if remove_emotion(clean_predictions):
-                        self.history += [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{clean_predictions}")]
+                        self.history += [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{clean_predictions}")]
                 else:
-                    self.history += [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
+                    self.history += [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
                 self.processing_cache = None  # 清空缓存，避免重复生成历史数据
                 return thought, predictions, "", finish_reason, ""
         except Exception:
@@ -439,7 +439,7 @@ class Qwen(LLM):
         try:
             finish_reason = resp_json['choices'][0]['finish_reason']
             if finish_reason == "function_call":
-                predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
+                predictions = resp_json['choices'][0]['message']['content'].strip()
                 thought = resp_json['choices'][0]['thought'].strip()
                 action = resp_json['choices'][0]['message']['function_call']
                 action_name = action['name']
@@ -452,25 +452,25 @@ class Qwen(LLM):
                         {"role": "assistant",
                          "content": f"Thought: {thought}\nAnswer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
                     tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                    self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
+                    self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
                 else:
                     # 格式化数据集
                     self.conversations.append(create_conversation(
                         {"role": "assistant",
                          "content": f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"}))
                     tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                    self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
+                    self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
 
                 print(f"历史长度：{len(self.history)}")
                 return thought, predictions, feedback, finish_reason, action_name
             else:
-                predictions = resp_json['choices'][0]['message']['content'][0]['text'].strip()
+                predictions = resp_json['choices'][0]['message']['content'].strip()
                 thought = resp_json['choices'][0]['thought'].strip()
                 # 格式化数据集
                 self.conversations.append(create_conversation(
                     {"role": "assistant", "content": f"Thought: {thought}\nFinal Answer: {predictions}"}))
 
-                self.history = self.history + [build_multi_modal_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
+                self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
 
                 return thought, predictions, "", finish_reason, ""
         except Exception:
