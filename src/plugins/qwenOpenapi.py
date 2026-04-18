@@ -17,7 +17,8 @@ from src.plugins.emotion import remove_emotion
 logging.basicConfig(level=logging.INFO)
 
 SLEEP_INFORMATION = "【睡觉】（爱丽丝正在充电中，请于滴声后留言~）"
-OVERTHINK_INFORMATION = "【思考】（爱丽丝看着群里的消息，若有所思）...[SILENCE]"
+# OVERTHINK_INFORMATION = "【思考】（爱丽丝看着群里的消息，若有所思）...[SILENCE]"
+OVERTHINK_INFORMATION = "[SILENCE]"
 
 
 def get_value_in_brackets(tool_call):
@@ -109,7 +110,7 @@ class Qwen(LLM):
     def check_interruption(self, user_id) -> bool:
         if self.processing_cache is not None and self.processing_cache.get("user_id") == user_id:
             time_diff = datetime.now() - self.processing_cache.get("timestamp")
-            if time_diff.seconds < 8:
+            if time_diff.seconds < 10:
                 return True
         return False
 
@@ -325,10 +326,10 @@ class Qwen(LLM):
 
         dialog_history = []
         for conversation in self.history[:-cut_point]:
-            dialog_history += conversation["content"]
+            dialog_history.append(conversation["content"])
 
         summary_prompt = f"前情提要：{summary_temp}\n\n对话历史：{dialog_history}\n\n" \
-                         f"综合上面的前情提要和对话历史中的剧情，为爱丽丝汇总成150字以内的记忆片段，并提取出需要长期记忆的重要细节信息。" \
+                         f"综合上面的前情提要和对话历史中的剧情，为爱丽丝汇总成300字以内的记忆片段，并提取出需要长期记忆的重要细节信息。" \
                          f"记忆片段要求用讲述故事的语气，长度适中，需要保留对话历史中的人物和关键信息，并且反映最近的对话内容，思考过程尽量简略："
         self.summary = await self.call_assistant(summary_prompt)
         return self.summary

@@ -138,3 +138,18 @@ func_walk = {
             'required': ['to'],
         },
     }
+func_access_website = {
+        'name': 'access_website',
+        'description': '用浏览器访问对应的网页，查看信息',
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'url': {
+                    'type': 'string',
+                    'description':
+                    '访问的互联网网页URL地址',
+                },
+            },
+            'required': ['url'],
+        },
+    }

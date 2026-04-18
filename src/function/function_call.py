@@ -1,3 +1,6 @@
+import asyncio
+from typing import List, Tuple, Callable, Dict, Union, Any
+
 from src.dao.status import find_route, check_railway, get_available_functions, set_available_functions
 import src.function.functions as func
 import src.function.services as serv
@@ -19,9 +22,10 @@ def get_general_tools():
     functions = [
         func.func_sword_of_light,
         func.func_search_on_internet,
-        format_move(func.func_move, steps=0, school_id=0, area_id=0)
+        format_move(func.func_move, steps=0, school_id=0, area_id=0),
+        func.func_access_website
     ]
-    available_actions = "[sword_of_light],[search_on_internet],[move]"
+    available_actions = "[sword_of_light],[search_on_internet],[move],[access_website]"
     set_available_functions(available_actions)
     if check_railway():
         functions.append(format_railway(func.func_railway))
@@ -50,57 +54,60 @@ def move_tool(steps, school_id, area_id):
         return [format_move(func.func_decide_school, steps=2, school_id=0, area_id=0)]
 
 
+def make_handler(
+        method_name: str,
+        param_specs: List[Tuple[str, str]]  # [(参数名, 缺失时的错误信息), ...]
+) -> Callable[[Dict], Union[str, Any]]:
+    """
+    创建一个技能处理器，每个参数可绑定独立的错误信息。
+    :param method_name: serv 对象上的方法名
+    :param param_specs: 参数规格列表，每个元素为 (参数名, 缺失错误消息)
+    :return: 异步处理器函数 async (action_input) -> str
+    """
+    param_names = [p[0] for p in param_specs]
+    error_msgs = {p[0]: p[1] for p in param_specs}  # 参数名 -> 错误消息
+
+    async def handler(action_input: Dict) -> str:
+        method = getattr(serv, method_name)
+
+        # 按顺序提取参数值，遇到缺失立即返回对应的错误消息
+        args = []
+        for name in param_names:
+            value = action_input.get(name)
+            if value is None:
+                return error_msgs[name]  # 返回该参数绑定的错误信息
+            args.append(value)
+
+        # 所有参数都已提供，调用方法（同步或异步）
+        if asyncio.iscoroutinefunction(method):
+            result = await method(*args)
+        else:
+            result = method(*args)
+        return str(result)
+
+    return handler
+
+
+# 技能注册表
+skill_handlers: Dict[str, Callable] = {
+    "sword_of_light": make_handler("hikari_yo", [("target", "光之剑必须指定一个目标！")]),
+    "move": make_handler("move", [("options", "必须选择一个希望前往的地点！")]),
+    "decide_area": make_handler("decide_area", [("options", "必须选择一个希望前往的区域！")]),
+    "decide_school": make_handler("decide_school", [("options", "必须选择一个希望前往的校区！")]),
+    "take_railway": make_handler("take_railway", [("options", "必须选择一个希望前往的站点！")]),
+    "search_for_item": make_handler("search_for_item", []),  # 无参技能
+    "search_on_internet": make_handler("search_on_internet", [("query", "查询参数不能为空！")]),
+    "access_website": make_handler("access_website", [("url", "URL地址不能为空！")]),
+}
+
+
 async def skill_call(action: str, action_input: dict) -> str:
-    print(get_available_functions(), f"=>[{action}]")
-    if f"[{action}]" not in get_available_functions():
+    available = get_available_functions()
+    if f"[{action}]" not in available:
         return f"当前不存在可使用的技能{action}！"
-    if action == "sword_of_light":
-        target = action_input.get("target")
-        if target is not None:
-            call_result = serv.hikari_yo(target)
-        else:
-            call_result = "光之剑必须指定一个目标！"
-    # elif action == "move":
-    #     to = action_input.get("to")
-    #     if to is not None:
-    #         result = move(to)
-    #     else:
-    #         result = move("")
-    elif action == "move":
-        options = action_input.get("options")
-        if options is not None:
-            call_result = serv.move(options)
-        else:
-            call_result = "必须选择一个希望前往的地点！"
-    elif action == "decide_area":
-        options = action_input.get("options")
-        if options is not None:
-            call_result = serv.decide_area(options)
-        else:
-            call_result = "必须选择一个希望前往的区域！"
-    elif action == "decide_school":
-        options = action_input.get("options")
-        if options is not None:
-            call_result = serv.decide_school(options)
-        else:
-            call_result = "必须选择一个希望前往的校区！"
-    elif action == "take_railway":
-        options = action_input.get("options")
-        if options is not None:
-            call_result = serv.take_railway(options)
-        else:
-            call_result = "必须选择一个希望前往的站点！"
-    elif action == "search_for_item":
-        call_result = serv.search_for_item()
-    elif action == "search_on_internet":
-        query = action_input.get("query")
-        if query is not None:
-            call_result = await serv.search_on_internet(query)
-        else:
-            call_result = "查询参数不能为空！"
-    else:
-        call_result = f"当前不存在可使用的技能{action}！"
-    return str(call_result)
 
+    handler = skill_handlers.get(action)
+    if handler is None:
+        return f"当前不存在可使用的技能{action}！"
 
-
+    return await handler(action_input)

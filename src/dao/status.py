@@ -263,11 +263,11 @@ def check_railway() -> bool:
         return False
 
 
-alice_query = on_command("爱丽丝状态")
-map_guide = on_command("地图")
-position_map = on_command("地点地图")
-area_map = on_command("区域地图")
-school_map = on_command("校区地图")
+alice_query = on_command("爱丽丝状态", block=True)
+map_guide = on_command("地图", block=True)
+position_map = on_command("地点地图", block=True)
+area_map = on_command("区域地图", block=True)
+school_map = on_command("校区地图", block=True)
 
 
 @alice_query.handle()

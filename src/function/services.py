@@ -1,5 +1,5 @@
 import src.skills.game_status_process as game
-from src.skills.online_search import online_search_func
+from src.skills.online_search import online_search_func, access_page_func
 from src.dao.status import move_position, move_default_position, \
     get_available_move_targets, get_available_railway_targets, get_available_areas, get_available_schools
 
@@ -96,7 +96,7 @@ def search_for_item() -> str:
 
 
 async def search_on_internet(item: str) -> str:
-    raw_info = await online_search_func(item)
+    raw_info, url_list = await online_search_func(item)
     info = f"（爱丽丝在网络上对〖{item}〗词条进行了一番搜索，得到了一些信息）{raw_info}"
     if raw_info != "" and raw_info != "ERROR" and raw_info != "其他网站的摘要信息：\n":
         print(raw_info)
@@ -107,4 +107,11 @@ async def search_on_internet(item: str) -> str:
     else:
         return f"（爱丽丝在网络上对〖{item}〗词条进行了一番搜索，但是由于网络问题什么都没能找到。也许之后再试试吧。）"
 
+
+async def access_website(url: str):
+    page_text, page_links, page_image = await access_page_func(url)
+    if page_image is not None:
+        return f"（爱丽丝访问了网页{url}，得到了以下内容）\n网页截图：[image,base64={page_image}\n网页链接：{page_links}]"
+    else:
+        return f"（爱丽丝对{url}的访问似乎因为网络不佳的原因失败了...）"
 

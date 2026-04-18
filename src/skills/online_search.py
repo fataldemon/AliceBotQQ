@@ -1,13 +1,92 @@
-import asyncio
+import base64
 import random
 import re
 import traceback
 
-import httpx
+import html2text
 from playwright.async_api import async_playwright
+import playwright
+import time
+import asyncio
 
 
-async def online_search_func(item: str) -> str:
+def image_to_base64(image_path: str) -> str:
+    """读取本地图片，返回 base64 编码字符串"""
+    with open(image_path, 'rb') as img_file:
+        # 读取二进制数据并编码为 base64
+        b64_bytes = base64.b64encode(img_file.read())
+        # 将 bytes 转为字符串
+        b64_string = b64_bytes.decode('utf-8')
+    return b64_string
+
+
+async def access_page_func(url: str, max_scrolls: int = 3):
+    print(url)
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False)
+        page = await browser.new_page()
+        try:
+            # 1. 访问页面
+            await page.goto(url, wait_until="domcontentloaded")
+            # 2. 等待懒加载内容（如滚动加载评论区）
+            # 模拟滚动到底部，触发懒加载（可根据需要选择）
+            # 可选：有限滚动，而不是无限滚动
+            if max_scrolls > 0:
+                for _ in range(max_scrolls):
+                    await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+                    await page.wait_for_timeout(2000)  # 等待新内容加载
+
+            # 3. 获取页面标题（用于截图文件名）
+            title = await page.title()
+            safe_title = re.sub(r'[\\/*?:"<>|]', "_", title)
+            # 4. 获取页面可见文本
+            text_content = await page.inner_text('body')
+            # 5. 获取所有链接及名称
+            links = await page.evaluate('''() => {
+                            const anchors = document.querySelectorAll('a');
+                            const result = [];
+                            for (const a of anchors) {
+                                const text = a.innerText.trim();
+                                const href = a.href;   // 自动转为绝对 URL
+                                if (href && href !== '#' && !href.startsWith('javascript:')) {
+                                    result.push({ text: text, href: href });
+                                }
+                            }
+                            return result;
+                        }''')
+            # 提取视频链接（B站专用）
+            if url.startswith("https://www.bilibili.com"):
+                video_links = await page.evaluate('''() => {
+                                const videoLinks = new Map();
+                                const anchors = document.querySelectorAll('a[href*="/video/"]');
+                                for (const a of anchors) {
+                                    let text = a.innerText.trim();
+                                    const href = a.href;
+                                    if (text && href && href.includes('/video/')) {
+                                        text = text.split('\\n')[0].slice(0, 100);
+                                        videoLinks.set(href, text);
+                                    }
+                                }
+                                return Array.from(videoLinks.entries()).map(([href, text]) => ({ text, href }));
+                            }''')
+                links = video_links
+            # 过滤掉 text 为空的链接
+            links = [link for link in links if link.get('text', '').strip()]
+
+            # 6. 截图并转 base64
+            screenshot_path = f"screenshots/{safe_title}.png"
+            await page.screenshot(path=screenshot_path, full_page=True)
+            screenshot_base64 = image_to_base64(screenshot_path)
+
+            return text_content, links, screenshot_base64
+        except Exception as e:
+            print(f"处理页面时出错: {e}")
+            return None, None, None
+        finally:
+            await browser.close()
+
+
+async def online_search_func(item: str) -> tuple[str, list]:
     async with async_playwright() as p:
         try:
             # 设置 User-Agent
@@ -73,7 +152,7 @@ async def online_search_func(item: str) -> str:
                     print(f"尝试第 {retries} 次加载失败: {e}")
                     if retries >= max_retries:
                         raise Exception("多次尝试加载失败，停止重试。")
-                        return "ERROR"
+                        return "ERROR", []
 
             for url in url_list:
                 if page_no >= 2 or (moegirl_token and baike_token):
@@ -86,7 +165,7 @@ async def online_search_func(item: str) -> str:
                         box_locator = await pages[page_no].query_selector(".mw-parser-output >> .moe-infobox")
                         box_content = await box_locator.text_content()
                         box_content = box_content.replace("\n\n\n", "")
-                        info += f"根据萌娘百科提供的信息如下：\n{box_content}\n"
+                        info += f"根据萌娘百科{url}提供的信息如下：\n{box_content}\n"
                         context_locator = await pages[page_no].query_selector_all(
                             ".mw-parser-output > h2:not(table *), .mw-parser-output > h3:not(table *), "
                             ".mw-parser-output > h4:not(table *), .mw-parser-output > p:not(table *), "
@@ -106,7 +185,7 @@ async def online_search_func(item: str) -> str:
                         summary = await context_locator.text_content()
                         box_locator = await pages[page_no].query_selector(".J-basic-info")
                         brief_info = await box_locator.text_content()
-                        info += f"根据百度百科网站提供的信息如下：\n{brief_info}\n{summary}\n"
+                        info += f"根据百度百科{url}提供的信息如下：\n{brief_info}\n{summary}\n"
                         page_no += 1
                         baike_token = True
                     elif url.startswith("https://zh.wikipedia.org") or url.startswith("https://en.wikipedia.org") and (not wiki_token):
@@ -119,7 +198,7 @@ async def online_search_func(item: str) -> str:
                             ".mw-parser-output > ul:not(table *)")
                         for item in context_locator:
                             search_info = await item.text_content()
-                            info += f"根据Wikipedia提供的信息如下：\n{search_info}\n"
+                            info += f"根据Wikipedia网站{url}提供的信息如下：\n{search_info}\n"
                             # print(search_info.replace("\n\n", ""))
                         page_no += 1
                 except Exception as e:
@@ -136,9 +215,15 @@ async def online_search_func(item: str) -> str:
             await browser.close()
         except Exception as e:
             info = "ERROR"
-        return info
+        return info, url_list
 
 
 if __name__ == "__main__":
     info = asyncio.run(online_search_func("JOJO的奇妙冒险"))
     print(info)
+    # text, links, b64img = asyncio.run(access_page_func("https://www.bilibili.com/", max_scrolls=1))
+    # print(len(links))
+    # if links:
+    #     for link in links:  # 只打印前10个
+    #         print(f"名称: {link['text']}, 地址: {link['href']}")
+

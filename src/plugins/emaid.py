@@ -2,15 +2,14 @@ import asyncio
 import datetime
 import re
 
-from nonebot import on_message, on_notice
+from nonebot import on_message, on_notice, get_bot
 from nonebot import on_command
-from nonebot.adapters.onebot.v11.message import Message, MessageSegment
-from nonebot.adapters.onebot.v11.event import Event, MessageEvent, NotifyEvent, PokeNotifyEvent
+from nonebot.adapters.onebot.v11 import Message, MessageSegment, Event, MessageEvent, NotifyEvent, PokeNotifyEvent
 from src.plugins.chatglmOpenapi import ChatGLM
 from src.plugins.qwenOpenapi import Qwen, SLEEP_INFORMATION
 from src.plugins.emotion import remove_emotion, check_emotion
 from src.plugins.voice import remove_action, get_translation, voice_generate
-from src.plugins.image_process import get_pic_desc, recent_img_buffer
+from src.skills.image_process import recent_img_buffer
 from src.skills.game_status_process import clear_death_list, get_game_status, get_ban_words
 from src.dao.map import get_school, get_area
 from src.dao.user import query_user, add_user, update_user_name, get_user_description, get_poke_description
@@ -19,19 +18,16 @@ from src.function.function_call import get_general_tools, move_tool
 
 CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"1. **身份一致性**：你必须完全沉浸在上述角色设定中。严禁提及你是 AI、机器人、程序 or 语言模型。严禁以 AI 助手的语气说话。\n" \
-               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述，尽量在80个汉字以内，但在复述、或者论述十分具有专业性和科学性的内容时，可以放宽要求到400字。\n" \
-               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者，绝不能认为对方是在对你说话。如果你对话题感兴趣、或者确信话题与你有关，可以选择插话，否则应尽量保持沉默。\n" \
+               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述，尽量在50个汉字以内，但在复述、或者论述十分具有专业性和科学性的内容时，可以放宽要求到400字。\n" \
+               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者。你需要根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复，否则请保持沉默并回复 [SILENCE]。\n" \
                f"4. **互动决策**：\n" \
-               f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 **[SILENCE]**。\n" \
-               f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的知识，可以积极地使用**search_on_internet**的工具能力检索相关知识。查到的信息会被自动存储入知识库中，因此也应当避免检索无意义的信息。\n" \
+               f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 [SILENCE]。\n" \
+               f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的词汇、你不知道的网络梗，或是令你疑惑的表述，可以积极主动地使用**search_on_internet**的工具能力检索相关知识。你也可以通过**access_website**主动访问对话中涉及到的网页。通过**search_on_internet**查到的信息会被自动存储入知识库中。\n" \
                f"   - **防御机制**：当检测到对方发送**恶毒语言**（如“杀了你全家”、“去死吧”等诅咒或严重人身攻击）或**黄赌毒恐暴**（色情、赌博、毒品、恐怖主义、暴力）相关内容时，可以对他使用光之剑**sword_of_light**以触发拉黑机制。这是为了保护你和维护群聊环境。\n" \
                f"5. **视觉感知**：\n" \
                f"   - 若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，**严禁**将其解读为真实发生的严重事件（如受伤、灾难）。请以轻松、调侃、配合玩梗或“看来你很喜欢这个表情”的态度回复。\n" \
                f"   - 若标记为 **[发送了一张图片]**，则正常结合图片内容进行符合人设的评价。\n"
-LURKING_INSTRUCT = "你正在【潜水】观察群聊。这**可能**只是群员之间的普通对话，并非对你说话。" \
-                   "你需要根据上下文自主作出判断，除非话题吸引你、你被提及或者正在延续此前与你有关的对话，否则请保持沉默并回复 [SILENCE]。" \
-                   "你也可以主动发送[SILENCE]终止当前对话或者与对方告别。" \
-                   "**切记不要过度思考**。"
+LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话。请根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 [SILENCE]。"
 
 THREAD_LOCKER: bool = True  # 对话线程锁
 ACTIVE_SWITCH: bool = True  # 主动读取对话开关
@@ -61,9 +57,9 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
             temperature=1.0,
-            top_p=0.9,
+            top_p=0.8,
             top_k=20,
-            max_history=12,
+            max_history=20,
             repetition_penalty=1.0,
             presence_penalty=1.05,
             enable_thinking=True
@@ -219,6 +215,8 @@ async def send_feedback(feedback: str, group_id: str, tools) -> tuple:
 def set_talker_name(user_id: str, username: str):
     if user_id == master_id:
         username = "老师"
+    if user_id == bot_id:
+        username = "天童爱丽丝"
     user = query_user(user_id)
     username = remove_action(username)
     if len(username) >= 15:
@@ -238,6 +236,8 @@ def set_talker_name(user_id: str, username: str):
 def get_talker_name(user_id: str) -> str:
     if user_id == master_id:
         return "老师"
+    if user_id == bot_id:
+        return "天童爱丽丝"
     user = query_user(user_id)
     if user is not None:
         return user.user_name
@@ -336,11 +336,19 @@ def recent_img_add(group_id: str) -> str:
 
 
 # 处理复杂类型的消息（图片处理、at等）
-def process_message(message: Message, user_id: str):
+async def process_message(event: Event, user_id: str):
     line = ""
     at = ""
+    message = event.get_message()
+    if isinstance(event, MessageEvent):
+        reply_info = event.reply
+        if reply_info is not None:
+            reply_sender_id = reply_info.sender.user_id
+            username = get_talker_name(reply_sender_id)
+            reply_source = reply_info.raw_message
+            line += f"[对于{username}发送的消息“{reply_source}”发送的回复]"
     for seg in message:
-        print(f">>>>SEG.TYPE>>>>>{seg.type}<<<<<< ")
+        print(f">>>>SEG.TYPE>>>>>{seg.type}<<<<<<>>>>>SEG.DATA>>>>>{seg.data}<<<<<< ")
         if seg.type == "text":
             # 过滤括号里的内容
             content = seg.data["text"]
@@ -357,8 +365,23 @@ def process_message(message: Message, user_id: str):
             # line += f"（发送了一张图片）[图片，description:\"{desc}\"]"
             line += f"[image,url={url}]"
             print(line)
+        elif seg.type == "json":
+            line += f"[分享了{str(seg.data)}]"
+        elif seg.type == "record":
+            record_url = seg.data.get("url")
+            line += f"[发送了一条语音]"
         elif seg.type == "at":
-            at = seg.data["name"]
+            at_userid = seg.data["qq"]
+            at_username = get_talker_name(at_userid)
+            line += f"@{at_username}"
+            if at == "":
+                at = f"{at_username}[id={at_userid}]"
+            else:
+                at += "、" + f"{at_username}[id={at_userid}]"
+        elif seg.type == "forward":
+            forward_id = seg.data.get("id")
+            forward_messages = await get_bot(bot_id).get_forward_msg(id=forward_id)
+            line += f"[转发了消息：{forward_messages}]"
     return line, at
 
 
@@ -425,7 +448,6 @@ def build_prompt(at, _poke, _tome, user_id, master_id, message, username, ng_wor
         return f"（{get_poke_description(user_id)}）"
 
     # 普通消息场景
-    print(f">>>>>>USER_ID={user_id}>>>>>>MASTER_ID={master_id}>>>>>>EQ={user_id == master_id}>>>>>")
     if user_id == master_id:
         # 主人（老师）特殊处理
         if message.strip():
@@ -435,49 +457,49 @@ def build_prompt(at, _poke, _tome, user_id, master_id, message, username, ng_wor
             elif message.startswith("/momotalk"):
                 message = message.replace("/momotalk", "")
                 if message.strip() == "":
-                    return f"（{username}收到了从爱丽丝那里发来的Momotalk信息）"
+                    return f"（{username}[id={user_id}]收到了从爱丽丝那里发来的Momotalk信息）"
                 else:
-                    return f"（{username}给爱丽丝发送了一条Momotalk信息）{message}"
+                    return f"（{username}[id={user_id}]给爱丽丝发送了一条Momotalk信息）{message}"
             else:
                 if _tome:
-                    return f"（{username}对爱丽丝说）{message}"
+                    return f"（{username}[id={user_id}]对爱丽丝说）{message}"
                 elif at != "":
-                    return f"（{username}对{at}说）{message}"
+                    return f"（{username}[id={user_id}]对{at}说）{message}"
                 else:
-                    return f"（{username}说）{message}"
+                    return f"（{username}[id={user_id}]说）{message}"
         else:
             if _tome:
-                return f"（{username}叫了爱丽丝一声）"
+                return f"（{username}[id={user_id}]@了爱丽丝一下）"
             elif at != "":
-                return f"（{username}叫了{at}一声）"
+                return f"（{username}[id={user_id}]@了{at}一下）"
             else:
-                return f"（{username}发送了一条空消息）"
+                return f"（{username}[id={user_id}]发送了一条空消息）"
 
     # 普通群成员
     if message.strip():
         if message.startswith("/给你钱"):
             message = message.replace("/给你钱", "")
-            return f"（名叫“{username}”的同学给了爱丽丝1信用积分，爱丽丝的财富增加了。）{message}"
+            return f"（名叫“{username}”的同学[id={user_id}]给了爱丽丝1信用积分，爱丽丝的财富增加了。）{message}"
         elif message.startswith("/momotalk"):
             message = message.replace("/momotalk", "")
             if message.strip() == "":
-                return f"（名叫“{username}”的同学收到了爱丽丝那里发来的Momotalk信息）"
+                return f"（名叫“{username}”的同学[id={user_id}]收到了爱丽丝那里发来的Momotalk信息）"
             else:
-                return f"（名叫“{username}”的同学给爱丽丝发送了一条Momotalk信息）{message}"
+                return f"（名叫“{username}”的同学[id={user_id}]给爱丽丝发送了一条Momotalk信息）{message}"
         else:
             if _tome:
-                return f"（名叫“{username}”的同学对爱丽丝说）{message}"
+                return f"（名叫“{username}”的同学[id={user_id}]对爱丽丝说）{message}"
             elif at != "":
-                return f"（名叫“{username}”的同学对{at}说）{message}"
+                return f"（名叫“{username}”的同学[id={user_id}]对{at}说）{message}"
             else:
-                return f"（名叫“{username}”的同学说）{message}"
+                return f"（名叫“{username}”的同学[id={user_id}]说）{message}"
     else:
         if _tome:
-            return f"（名叫“{username}”的同学叫了爱丽丝一声）"
+            return f"（名叫“{username}”的同学[id={user_id}]叫了爱丽丝一声）"
         elif at != "":
-            return f"（名叫“{username}”的同学叫了{at}一声）"
+            return f"（名叫“{username}”的同学[id={user_id}]叫了{at}一声）"
         else:
-            return f"（名叫“{username}”的同学发送了一条空消息）"
+            return f"（名叫“{username}”的同学[id={user_id}]发送了一条空消息）"
 
 
 @poke_reply.handle()
@@ -486,6 +508,8 @@ async def chat(event: Event):
     # 线程锁，保证同时只有一个请求在LLM进行处理，如果此时间内有多个请求进入就进入缓存区
     global THREAD_LOCKER
 
+    # 获取群组号码
+    group_id = event.group_id
     print(f">>>>>>>>>>>>>>>>>线程锁状态{THREAD_LOCKER}<<<<<<<<<<<<<")
     # 获取呼叫用户名(戳一戳和普通消息)
     if isinstance(event, PokeNotifyEvent):
@@ -496,17 +520,18 @@ async def chat(event: Event):
         _poke = False
         _tome = event.to_me
         user_id = str(event.get_user_id())
-        message, at = process_message(event.get_message(), user_id)
+        message, at = await process_message(event, user_id)
     # 获取用户昵称
     if not _poke:
-        username = event.sender.card if event.sender else None
-        if username != "":
-            set_talker_name(user_id, username)
+        username = event.sender.card if event.sender.card != "" else event.sender.nickname
+    else:
+        user_info = await get_bot(bot_id).get_group_member_info(group_id=group_id, user_id=user_id, no_cache=False)
+        username = user_info["card"] if user_info.get("card") != "" else user_info["nickname"]
+    if username != "":
+        set_talker_name(user_id, username)
     username = get_talker_name(user_id)
     if user_id == master_id:
         username = "老师"
-    # 获取群组号码
-    group_id = event.group_id
 
     # 获取缓冲区的历史消息
     pre_messages = ""
@@ -557,7 +582,7 @@ async def chat(event: Event):
         await asyncio.sleep(0.1)
     THREAD_LOCKER = False
     # 等待0.5秒，让同时消息进来
-    await asyncio.sleep(0.5)
+    # await asyncio.sleep(0.5)
     # 从缓冲区按顺序取出消息，然后清空缓冲区
     if message_buffer.get(group_id) is not None and len(message_buffer.get(group_id)) != 0:
         for pre_message in message_buffer.get(group_id):
@@ -618,14 +643,15 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
         response = "[SILENCE]"
     if "[SILENCE]" in response:
         # 移除 [SILENCE] 标记，保留前面的内容（如果有）
-        clean_response = response.replace("[SILENCE]", "").strip()
+        clean_response = response.split("[SILENCE]")[0].strip()
         if remove_emotion(clean_response):
             await _send_response(group_chatter, user_id, clean_response)
         # 无论是否发送内容，都不再继续后续的 function_call 循环
         return
 
     # 发送首次响应
-    await _send_response(group_chatter, user_id, response)
+    if response != "":
+        await _send_response(group_chatter, user_id, response)
 
     steps = 0
     loop = 0
@@ -634,19 +660,23 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
         loop += 1
         if feedback != "":
             if function == "search_on_internet":
+                await group_chatter.send(f"[System]查询并总结中...")
                 if "（爱丽丝在网络上对〖" in feedback and "〗词条进行了一番搜索，得到了一些信息）" in feedback:
                     tools = get_general_tools()
                     locator_left = feedback.rfind("〖")
                     locator_right = feedback.rfind("〗")
                     subject = feedback[locator_left + 1:locator_right]
                     web_summary = await send_to_assistant(
-                        feedback + f"\n\n在300字以内总结上面关于\"{subject}\"的搜索结果，输出时尽量总结成单个段落：",
+                        feedback + f"\n\n在400字以内总结上面关于\"{subject}\"的搜索结果，输出时去掉所有空格和换行符，并以<reference_url:https://...>这样的格式在末尾列出所有参考的网页链接：",
                         group_id, type=1
                     )
-                    observation = f"（爱丽丝在网络上对\"{subject}\"进行了一番搜索，得到了下面的信息）{web_summary}"
+                    raw_observation = f"（爱丽丝在网络上对\"{subject}\"进行了一番搜索，得到了下面的信息）{web_summary}"
+                    # 匹配从 <reference_url: 开始到第一个 > 结束的内容
+                    pattern = r'<reference_url:[^>]*>'
+                    # 替换为空字符串，并去除尾部空白（如换行、空格）
+                    observation = re.sub(pattern, '', raw_observation).rstrip()
                 else:
                     observation = feedback
-                await group_chatter.send(f"[System]{observation}")
             elif function == "move" or function == "decide_area" or function == "decide_school":
                 if feedback == "[EXIT_AREA]":
                     steps = 1
@@ -681,6 +711,10 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                     steps = 0
                     await group_chatter.send(f"[System]{feedback}")
                     observation = feedback
+            elif function == "access_website":
+                if "因为网络不佳的原因失败了" in feedback:
+                    await group_chatter.send(f"[System]{feedback}")
+                observation = feedback
             else:
                 tools = get_general_tools()
                 await group_chatter.send(f"[System]{feedback}")
