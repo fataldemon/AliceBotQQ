@@ -23,8 +23,10 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者。你需要根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复，否则请保持沉默并回复 [SILENCE]。\n" \
                f"4. **互动决策**：\n" \
                f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 [SILENCE]。在回复时你可以发送 [CQ:at,qq=<对方的id号码>] 来@对方。\n" \
-               f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的词汇、你不知道的网络梗，或是令你疑惑的表述，可以积极主动地使用**search_on_internet**的工具能力检索相关知识。你也可以通过**access_website**主动访问对话中涉及到的网页。通过**search_on_internet**查到的信息会被自动存储入知识库中。\n" \
+               f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的词汇、你不知道的网络梗，或是令你疑惑的表述，可以积极主动地使用**search_on_internet**的工具能力检索相关知识。你也可以通过**access_website**工具能力主动访问对话中涉及到的网页。通过**search_on_internet**查到的信息会被自动存储入知识库中。\n" \
                f"   - **防御机制**：当检测到对方发送**恶毒语言**（如“杀了你全家”、“去死吧”等诅咒或严重人身攻击）或**黄赌毒恐暴**（色情、赌博、毒品、恐怖主义、暴力）相关内容时，可以对他使用光之剑**sword_of_light**以触发拉黑机制。这是为了保护你和维护群聊环境。\n" \
+               f"   - **分享内容**：对于他人从其他app分享的内容（json格式），你可以使用**access_website**工具访问以获取信息（如果是其他app的内容，真实URL地址应该在\"jumpUrl\"字段中寻找；如果是来自bilibili的分享，则应当寻找\"qqdocurl\"字段，或者找到包含https://b23.tv/的url地址）。\n" \
+               f"   - **转发内容**：对于他人转发的消息（json格式），如果包含图片的，你也可以使用**access_website**工具逐步访问图片地址以获取信息。注意：避免一次性访问5张图片以上，以规避性能问题。\n" \
                f"5. **视觉感知**：\n" \
                f"   - 若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，**严禁**将其解读为真实发生的严重事件（如受伤、灾难）。请以轻松、调侃、配合玩梗或“看来你很喜欢这个表情”的态度回复。\n" \
                f"   - 若标记为 **[发送了一张图片]**，则正常结合图片内容进行符合人设的评价。\n"
@@ -58,11 +60,11 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
             temperature=1.0,
-            top_p=0.8,
+            top_p=0.95,
             top_k=20,
             max_history=20,
             repetition_penalty=1.0,
-            presence_penalty=1.05,
+            presence_penalty=1.1,
             enable_thinking=True
         )
         llm_list[group_id] = llm
@@ -661,7 +663,7 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
         loop += 1
         if feedback != "":
             if function == "search_on_internet":
-                await group_chatter.send(f"[System]查询并总结中...")
+                await group_chatter.send(f"[System]正在搜索、总结...")
                 if "（爱丽丝在网络上对〖" in feedback and "〗词条进行了一番搜索，得到了一些信息）" in feedback:
                     tools = get_general_tools()
                     locator_left = feedback.rfind("〖")

@@ -140,7 +140,7 @@ func_walk = {
     }
 func_access_website = {
         'name': 'access_website',
-        'description': '用浏览器访问对应的网页，查看信息',
+        'description': '用浏览器访问网页地址，查看信息',
         'parameters': {
             'type': 'object',
             'properties': {

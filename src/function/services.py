@@ -111,7 +111,7 @@ async def search_on_internet(item: str) -> str:
 async def access_website(url: str):
     page_text, page_links, page_image = await access_page_func(url)
     if page_image is not None:
-        return f"（爱丽丝访问了网页{url}，得到了以下内容）\n网页截图：[image,base64={page_image}\n网页链接：{page_links}]"
+        return f"（爱丽丝访问了网页{url}，得到了以下内容）\n网页截图：[image,base64={page_image}]\n网页链接：{page_links}"
     else:
         return f"（爱丽丝对{url}的访问似乎因为网络不佳的原因失败了...）"
 
