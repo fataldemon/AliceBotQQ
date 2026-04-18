@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import re
+from typing import Union, Tuple
 
 from nonebot import on_message, on_notice, get_bot
 from nonebot import on_command
@@ -18,10 +19,10 @@ from src.function.function_call import get_general_tools, move_tool
 
 CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"1. **身份一致性**：你必须完全沉浸在上述角色设定中。严禁提及你是 AI、机器人、程序 or 语言模型。严禁以 AI 助手的语气说话。\n" \
-               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述，尽量在50个汉字以内，但在复述、或者论述十分具有专业性和科学性的内容时，可以放宽要求到400字。\n" \
+               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述，尽量在50个汉字以内，但在复述、或者论述十分具有专业性和科学性的内容时，可以放宽要求到300字。\n" \
                f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者。你需要根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复，否则请保持沉默并回复 [SILENCE]。\n" \
                f"4. **互动决策**：\n" \
-               f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 [SILENCE]。\n" \
+               f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 [SILENCE]。在回复时你可以发送 [CQ:at,qq=<对方的id号码>] 来@对方。\n" \
                f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的词汇、你不知道的网络梗，或是令你疑惑的表述，可以积极主动地使用**search_on_internet**的工具能力检索相关知识。你也可以通过**access_website**主动访问对话中涉及到的网页。通过**search_on_internet**查到的信息会被自动存储入知识库中。\n" \
                f"   - **防御机制**：当检测到对方发送**恶毒语言**（如“杀了你全家”、“去死吧”等诅咒或严重人身攻击）或**黄赌毒恐暴**（色情、赌博、毒品、恐怖主义、暴力）相关内容时，可以对他使用光之剑**sword_of_light**以触发拉黑机制。这是为了保护你和维护群聊环境。\n" \
                f"5. **视觉感知**：\n" \
@@ -369,11 +370,11 @@ async def process_message(event: Event, user_id: str):
             line += f"[分享了{str(seg.data)}]"
         elif seg.type == "record":
             record_url = seg.data.get("url")
-            line += f"[发送了一条语音]"
+            line += f"[发送了一条语音][voice,url={url}]"
         elif seg.type == "at":
             at_userid = seg.data["qq"]
             at_username = get_talker_name(at_userid)
-            line += f"@{at_username}"
+            line += f"@{at_username}[id={at_userid}] "
             if at == "":
                 at = f"{at_username}[id={at_userid}]"
             else:
@@ -730,31 +731,85 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
         await _send_response(group_chatter, user_id, response)
 
 
+def convert_cq_to_message(content: str) -> Tuple[Union[str, Message, MessageSegment], str]:
+    """
+    将字符串中的 [CQ:at,qq=数字] 转换为消息段，同时生成替换为 @用户名 的纯文本。
+
+    参数:
+        content: 原始字符串
+
+    返回:
+        (msg_obj, text_str)
+        - msg_obj: 可直接发送的消息对象（str/Message/MessageSegment）
+        - text_str: 将 [CQ:at,qq=xxx] 替换为 "@用户名 " 后的纯文本
+    """
+    pattern = re.compile(r'\[CQ:at,qq=(\d+)\]')
+    matches = list(pattern.finditer(content))
+
+    # 没有匹配到任何 CQ:at
+    if not matches:
+        return content, content
+
+    # 构造替换后的纯文本（从后往前替换，避免偏移）
+    text_result = content
+    for match in reversed(matches):
+        qq = match.group(1)
+        username = get_talker_name(qq)   # 调用你的函数获取用户名
+        replacement = f"@{username} "    # 用户名后加一个空格
+        text_result = text_result[:match.start()] + replacement + text_result[match.end():]
+
+    # 构造消息对象（原逻辑）
+    if len(matches) == 1 and matches[0].group(0) == content.strip():
+        # 整个字符串正好是一个纯 CQ 码
+        msg_obj = MessageSegment.at(user_id=matches[0].group(1))
+    else:
+        # 混合文本，构造 Message 对象
+        segments = []
+        last_end = 0
+        for match in matches:
+            start, end = match.span()
+            if start > last_end:
+                segments.append(content[last_end:start])
+            qq = match.group(1)
+            segments.append(MessageSegment.at(user_id=qq))
+            last_end = end
+        if last_end < len(content):
+            segments.append(content[last_end:])
+        msg_obj = Message(segments)
+
+    return msg_obj, text_result
+
+
 async def _send_response(group_chatter, user_id, response):
-    """发送响应消息，包含表情图片和语音（如果开关开启）"""
+    """发送响应消息，包含表情图片、语音（如果开关开启），支持 CQ:at 转 @ 消息段，同时语音使用替换后的文本"""
     emoji_file = check_emotion(user_id, response)
     print(emoji_file)
-    if not emoji_file == "":
-        await group_chatter.send(MessageSegment.image(file=emoji_file) + f"{remove_emotion(response)}")
-        if AUDIO_SWITCH:
-            if TRANSLATE_SWITCH:
-                voice_file_name = voice_generate(get_translation(remove_action(remove_emotion(response)), "jp"),
-                                                 lang="auto", format="silk")
-            else:
-                voice_file_name = voice_generate(remove_action(remove_emotion(response)), lang="zh", format="silk")
-            await group_chatter.send(MessageSegment.audio(path=voice_file_name))
+
+    # 1. 去除表情标记，得到不含表情的文本（可能仍含 CQ:at）
+    text_no_emotion = remove_emotion(response)
+
+    # 2. 转换 CQ:at 为消息对象和纯文本（@用户名 形式）
+    msg_obj, text_with_at = convert_cq_to_message(text_no_emotion)
+
+    # 3. 发送图片 + 消息对象
+    if emoji_file:
+        await group_chatter.send(MessageSegment.image(file=emoji_file) + msg_obj)
     else:
-        if not remove_emotion(response) == "":
-            await group_chatter.send(f"{remove_emotion(response)}")
-            if AUDIO_SWITCH:
-                if TRANSLATE_SWITCH:
-                    voice_file_name = voice_generate(get_translation(remove_action(remove_emotion(response)), "jp"),
-                                                     lang="auto", format="silk")
-                else:
-                    voice_file_name = voice_generate(remove_action(remove_emotion(response)), lang="zh", format="silk")
-                await group_chatter.send(MessageSegment.audio(path=voice_file_name))
+        if text_no_emotion:   # 原 text_no_emotion 非空（即使转换后可能变成纯@用户名）
+            await group_chatter.send(msg_obj)
         else:
             await group_chatter.send("...")
+
+    # 4. 发送语音（使用替换后的纯文本 text_with_at，并去除动作标记）
+    if AUDIO_SWITCH:
+        # 去除动作标记，得到最终用于语音的文本
+        clean_text = remove_action(text_with_at)
+        if TRANSLATE_SWITCH:
+            translated = get_translation(clean_text, "jp")
+            voice_file_name = voice_generate(translated, lang="auto", format="silk")
+        else:
+            voice_file_name = voice_generate(clean_text, lang="zh", format="silk")
+        await group_chatter.send(MessageSegment.audio(path=voice_file_name))
 
 
 @clear_memory.handle()
