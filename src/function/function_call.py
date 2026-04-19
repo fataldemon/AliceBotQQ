@@ -23,9 +23,10 @@ def get_general_tools():
         func.func_sword_of_light,
         func.func_search_on_internet,
         format_move(func.func_move, steps=0, school_id=0, area_id=0),
-        func.func_access_website
+        func.func_access_website,
+        func.func_run_code
     ]
-    available_actions = "[sword_of_light],[search_on_internet],[move],[access_website]"
+    available_actions = "[sword_of_light],[search_on_internet],[move],[access_website],[run_code_in_sandbox]"
     set_available_functions(available_actions)
     if check_railway():
         functions.append(format_railway(func.func_railway))
@@ -98,13 +99,14 @@ skill_handlers: Dict[str, Callable] = {
     "search_for_item": make_handler("search_for_item", []),  # 无参技能
     "search_on_internet": make_handler("search_on_internet", [("query", "查询参数不能为空！")]),
     "access_website": make_handler("access_website", [("url", "URL地址不能为空！")]),
+    "run_code_in_sandbox": make_handler("run_code_in_sandbox", [("language", "代码种类不能为空！"), ("code", "代码不能为空！")]),
 }
 
 
 async def skill_call(action: str, action_input: dict) -> str:
     available = get_available_functions()
     if f"[{action}]" not in available:
-        return f"当前不存在可使用的技能{action}！"
+        return f"当前不存在可使用的技能{action}！！"
 
     handler = skill_handlers.get(action)
     if handler is None:

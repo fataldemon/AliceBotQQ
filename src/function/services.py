@@ -1,5 +1,8 @@
+import asyncio
+
 import src.skills.game_status_process as game
 from src.skills.online_search import online_search_func, access_page_func
+from src.skills.code_running import run_in_sandbox
 from src.dao.status import move_position, move_default_position, \
     get_available_move_targets, get_available_railway_targets, get_available_areas, get_available_schools
 
@@ -115,3 +118,35 @@ async def access_website(url: str):
     else:
         return f"（爱丽丝对{url}的访问似乎因为网络不佳的原因失败了...）"
 
+
+async def run_code_in_sandbox(language: str, code: str):
+    """
+    在安全沙盒中执行 Python 或 Bash 代码，返回执行结果。
+
+    参数:
+        language: "python" 或 "bash"
+        code: 要执行的代码字符串
+    """
+    # 因为 run_in_sandbox 是同步函数，在异步环境中需要用线程池执行
+    loop = asyncio.get_running_loop()
+    stdout, stderr, exit_code = await loop.run_in_executor(
+        None, run_in_sandbox, language, code
+    )
+
+    # 根据执行结果构造返回消息
+    if exit_code == 0:
+        # 成功执行：返回标准输出和可能的错误输出（如果有）
+        if stdout and stderr:
+            return f"（代码执行成功）\n标准输出：\n{stdout}\n标准错误：\n{stderr}"
+        elif stdout:
+            return f"（代码执行成功）\n标准输出：\n{stdout}"
+        elif stderr:
+            return f"（代码执行成功）\n标准错误：\n{stderr}"
+        else:
+            return "（代码执行成功，但没有任何输出）"
+    elif exit_code is None:
+        # 超时或被强制终止
+        return f"（代码执行超时或异常终止）\n错误信息：{stderr}"
+    else:
+        # 执行失败（非零退出码）
+        return f"（代码执行失败，退出码 {exit_code}）\n标准输出：{stdout}\n标准错误：{stderr}"

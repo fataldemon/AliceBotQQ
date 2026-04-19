@@ -61,7 +61,7 @@ func_search_on_internet = {
     }
 func_move = {
         'name': 'move',
-        'description': '出发前往其他地点（步行）',
+        'description': '离开当前场景，出发前往其他地点（步行）',
         'parameters': {
             'type': 'object',
             'properties': {
@@ -140,7 +140,7 @@ func_walk = {
     }
 func_access_website = {
         'name': 'access_website',
-        'description': '用浏览器访问网页地址，查看信息',
+        'description': '调用浏览器访问网页地址，查看具体信息',
         'parameters': {
             'type': 'object',
             'properties': {
@@ -153,3 +153,22 @@ func_access_website = {
             'required': ['url'],
         },
     }
+func_run_code = {
+    "name": "run_code_in_sandbox",
+    "description": "在安全的 Docker 沙盒环境中执行 Python 或 Bash 代码，返回标准输出、错误输出和退出码。适用于隔离执行用户提供的动态代码片段。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "language": {
+                "type": "string",
+                "enum": ["python", "bash"],
+                "description": "要执行的代码语言，支持 python 或 bash"
+            },
+            "code": {
+                "type": "string",
+                "description": "要执行的代码字符串，例如 'print(\"Hello\")' 或 'echo \"Hello\"'"
+            }
+        },
+        "required": ["language", "code"]
+    }
+}
