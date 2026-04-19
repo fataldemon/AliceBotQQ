@@ -46,7 +46,8 @@ def _launch_debug_chrome():
         chrome_path,
         f"--user-data-dir={user_data_dir}",
         "--remote-debugging-port=9222",
-        "--remote-allow-origins=*"
+        "--remote-allow-origins=*",
+        "--noerrdialogs"
     ]
     _browser_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(2)  # 等待浏览器完全启动
@@ -96,11 +97,14 @@ def image_to_base64(image_path: str) -> str:
 async def cleanup():
     global _playwright, _browser, _browser_process
     if _browser:
-        await _browser.close()  # 这会关闭整个浏览器
+        await _browser.close()
+        _browser = None
     if _playwright:
         await _playwright.stop()
+        _playwright = None
     if _browser_process:
         _browser_process.terminate()
+        _browser_process = None
 
 
 async def access_page_func(url: str, max_scrolls: int = 3):
@@ -302,7 +306,7 @@ async def online_search_func(item: str) -> tuple[str, list]:
             await _page.close()
         await page.close()
         await context.close()
-        # await cleanup()
+        await cleanup()
     return info, url_list
 
 
