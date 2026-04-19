@@ -47,7 +47,9 @@ def _launch_debug_chrome():
         f"--user-data-dir={user_data_dir}",
         "--remote-debugging-port=9222",
         "--remote-allow-origins=*",
-        "--noerrdialogs"
+        "--noerrdialogs",
+        "--disable-session-crashed-bubble",   # 禁用恢复弹窗
+        "--disable-crash-reporter"
     ]
     _browser_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(2)  # 等待浏览器完全启动
@@ -177,7 +179,7 @@ async def access_page_func(url: str, max_scrolls: int = 3):
         await page.close()
         await context.close()
         # 如果希望脚本结束后浏览器保持打开，可以保留；否则可以手动终止
-        # await cleanup()  # 可选：关闭浏览器
+        await cleanup()  # 可选：关闭浏览器
 
 
 async def online_search_func(item: str) -> tuple[str, list]:

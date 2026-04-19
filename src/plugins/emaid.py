@@ -584,7 +584,7 @@ async def chat(event: Event):
         await asyncio.sleep(0.1)
     THREAD_LOCKER = False
     # 等待0.5秒，让同时消息进来
-    # await asyncio.sleep(0.5)
+    await asyncio.sleep(0.5)
     # 从缓冲区按顺序取出消息，然后清空缓冲区
     if message_buffer.get(group_id) is not None and len(message_buffer.get(group_id)) != 0:
         for pre_message in message_buffer.get(group_id):
