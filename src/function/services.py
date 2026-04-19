@@ -137,16 +137,16 @@ async def run_code_in_sandbox(language: str, code: str):
     if exit_code == 0:
         # 成功执行：返回标准输出和可能的错误输出（如果有）
         if stdout and stderr:
-            return f"（代码执行成功）\n标准输出：\n{stdout}\n标准错误：\n{stderr}"
+            return f"（爱丽丝的代码执行成功了！）\n<标准输出>：\n{stdout}\n<标准错误>：\n{stderr}"
         elif stdout:
-            return f"（代码执行成功）\n标准输出：\n{stdout}"
+            return f"（爱丽丝的代码执行成功了！）\n<标准输出>：\n{stdout}"
         elif stderr:
-            return f"（代码执行成功）\n标准错误：\n{stderr}"
+            return f"（爱丽丝的代码执行成功了！）\n<标准错误>：\n{stderr}"
         else:
-            return "（代码执行成功，但没有任何输出）"
+            return "（爱丽丝的代码执行成功了，只是没有任何输出）"
     elif exit_code is None:
         # 超时或被强制终止
-        return f"（代码执行超时或异常终止）\n错误信息：{stderr}"
+        return f"（爱丽丝的代码执行超时或因异常终止了！）\n<错误信息>：\n{stderr}"
     else:
         # 执行失败（非零退出码）
-        return f"（代码执行失败，退出码 {exit_code}）\n标准输出：{stdout}\n标准错误：{stderr}"
+        return f"（爱丽丝的代码执行失败了！退出码 {exit_code}）\n<标准输出>：{stdout}\n<标准错误>：{stderr}"

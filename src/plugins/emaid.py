@@ -221,8 +221,8 @@ def set_talker_name(user_id: str, username: str):
         username = "天童爱丽丝"
     user = query_user(user_id)
     username = remove_action(username)
-    if len(username) >= 15:
-        username = username[:14]
+    if len(username) >= 20:
+        username = username[:19]
     if user is None:
         add_user(user_id, username)
     else:
@@ -525,7 +525,7 @@ async def chat(event: Event):
         message, at = await process_message(event, user_id)
     # 获取用户昵称
     if not _poke:
-        username = event.sender.card if event.sender.card != "" else event.sender.nickname
+        username = event.sender.card.strip() if event.sender.card.strip() else event.sender.nickname.strip()
     else:
         user_info = await get_bot(bot_id).get_group_member_info(group_id=group_id, user_id=user_id, no_cache=False)
         username = user_info["card"] if user_info.get("card") != "" else user_info["nickname"]
