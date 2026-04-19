@@ -110,7 +110,7 @@ class Qwen(LLM):
     def check_interruption(self, user_id) -> bool:
         if self.processing_cache is not None and self.processing_cache.get("user_id") == user_id:
             time_diff = datetime.now() - self.processing_cache.get("timestamp")
-            if time_diff.seconds < 10:
+            if time_diff.seconds < 8:
                 return True
         return False
 
@@ -369,7 +369,7 @@ class Qwen(LLM):
         # self.record_dialog_in_file(role="user", content=prompt)
         try:
             resp_json = await self._post(url=self.url, query=query)
-        except aiohttp.ClientError:
+        except Exception:
             # self.history = self.history[:-1]
             self.processing_cache = None  # 清空缓存，避免重复生成历史数据
             return "", SLEEP_INFORMATION, "", "", ""
@@ -439,6 +439,10 @@ class Qwen(LLM):
         resp_json = await self._post(url=self.url, query=observation)
         try:
             finish_reason = resp_json['choices'][0]['finish_reason']
+            # 如果过度思考就不给思考过程了
+            if finish_reason == "overthink":
+                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
+                return "", OVERTHINK_INFORMATION, "", finish_reason, ""
             if finish_reason == "function_call":
                 predictions = resp_json['choices'][0]['message']['content'].strip()
                 thought = resp_json['choices'][0]['thought'].strip()

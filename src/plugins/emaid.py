@@ -19,18 +19,17 @@ from src.function.function_call import get_general_tools, move_tool
 
 CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"1. **身份一致性**：你必须完全沉浸在上述角色设定中。严禁提及你是 AI、机器人、程序 or 语言模型。严禁以 AI 助手的语气说话。\n" \
-               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述，尽量在50个汉字以内，但在复述、或者论述十分具有专业性和科学性的内容时，可以放宽要求到300字。\n" \
-               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者。你需要根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复，否则请保持沉默并回复 [SILENCE]。\n" \
+               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述。\n" \
+               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者。你需要根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复，否则请保持沉默并回复 **[SILENCE]**。\n" \
                f"4. **互动决策**：\n" \
-               f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 [SILENCE]。在回复时你可以发送 [CQ:at,qq=<对方的id号码>] 来@对方。\n" \
+               f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 **[SILENCE]**。在回复时你可以发送 **[CQ:at,qq=<对方的id号码>]** 来@对方。\n" \
                f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的词汇、你不知道的网络梗，或是令你疑惑的表述，可以积极主动地使用**search_on_internet**的工具能力检索相关知识。你也可以通过**access_website**工具能力主动访问对话中涉及到的网页。通过**search_on_internet**查到的信息会被自动存储入知识库中。\n" \
                f"   - **防御机制**：当检测到对方发送**恶毒语言**（如“杀了你全家”、“去死吧”等诅咒或严重人身攻击）或**黄赌毒恐暴**（色情、赌博、毒品、恐怖主义、暴力）相关内容时，可以对他使用光之剑**sword_of_light**以触发拉黑机制。这是为了保护你和维护群聊环境。\n" \
-               f"   - **分享内容**：对于他人从其他app分享的内容（json格式），你可以使用**access_website**工具访问以获取信息（如果是其他app的内容，真实URL地址应该在\"jumpUrl\"字段中寻找；如果是来自bilibili的分享，则应当寻找\"qqdocurl\"字段，或者找到包含https://b23.tv/的url地址）。\n" \
-               f"   - **转发内容**：对于他人转发的消息（json格式），如果包含图片的，你也可以使用**access_website**工具逐步访问图片地址以获取信息。注意：避免一次性访问5张图片以上，以规避性能问题。\n" \
+               f"   - **分享内容**：对于他人从其他app分享的内容，你可以使用**access_website**工具访问以获取信息（如果是其他app的内容，真实URL地址应该在\"jumpUrl\"字段中寻找；如果是来自bilibili的分享，则应当寻找\"qqdocurl\"字段，或者找到包含https://b23.tv/的url地址）。对于他人转发的消息（json格式），如果包含图片的，你也可以使用**access_website**工具逐步访问图片地址以获取信息。注意：避免一次性访问5张图片以上，以规避性能问题。\n" \
                f"5. **视觉感知**：\n" \
-               f"   - 若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，**严禁**将其解读为真实发生的严重事件（如受伤、灾难）。请以轻松、调侃、配合玩梗或“看来你很喜欢这个表情”的态度回复。\n" \
+               f"   - 你已经熟知了许多网络梗。若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，请尝试理解对方想要表达的意思或者情感，并以轻松、调侃、配合玩梗的态度回复。对于涉及的陌生的梗或者人物，可以用**search_on_internet**的工具能力检索相关知识\n" \
                f"   - 若标记为 **[发送了一张图片]**，则正常结合图片内容进行符合人设的评价。\n"
-LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话。请根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 [SILENCE]。"
+LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请根据上下文自主作出判断是否对你说话。如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。"
 
 THREAD_LOCKER: bool = True  # 对话线程锁
 ACTIVE_SWITCH: bool = True  # 主动读取对话开关
@@ -60,11 +59,11 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
             temperature=1.0,
-            top_p=0.95,
+            top_p=0.6,
             top_k=20,
-            max_history=20,
-            repetition_penalty=1.0,
-            presence_penalty=1.1,
+            max_history=16,
+            repetition_penalty=1.05,
+            presence_penalty=1.08,
             enable_thinking=True
         )
         llm_list[group_id] = llm
@@ -644,13 +643,6 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
     # 检查是否需要静默回复（活跃模式时，如果发生报错就静默）
     if (response == SLEEP_INFORMATION) and ACTIVE_SWITCH:
         response = "[SILENCE]"
-    if "[SILENCE]" in response:
-        # 移除 [SILENCE] 标记，保留前面的内容（如果有）
-        clean_response = response.split("[SILENCE]")[0].strip()
-        if remove_emotion(clean_response):
-            await _send_response(group_chatter, user_id, clean_response)
-        # 无论是否发送内容，都不再继续后续的 function_call 循环
-        return
 
     # 发送首次响应
     if response != "":
@@ -663,14 +655,23 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
         loop += 1
         if feedback != "":
             if function == "search_on_internet":
-                await group_chatter.send(f"[System]正在搜索、总结...")
                 if "（爱丽丝在网络上对〖" in feedback and "〗词条进行了一番搜索，得到了一些信息）" in feedback:
                     tools = get_general_tools()
                     locator_left = feedback.rfind("〖")
                     locator_right = feedback.rfind("〗")
                     subject = feedback[locator_left + 1:locator_right]
+                    await group_chatter.send(f"[System]正在搜索〖{subject}〗、总结信息中...")
                     web_summary = await send_to_assistant(
-                        feedback + f"\n\n在400字以内总结上面关于\"{subject}\"的搜索结果，输出时去掉所有空格和换行符，并以<reference_url:https://...>这样的格式在末尾列出所有参考的网页链接：",
+                        feedback + f"\n\n在400字以内总结上面关于\"{subject}\"的搜索结果。"
+                                   f"输出时不需要换行符，并根据内容在末尾用##的方式加上搜索的核心关键词tag，多个tag用空格隔开。"
+                                   f"在这之后，你还需要以<reference_url:https://...>这样的格式在末尾列出参考的网页链接。\n"
+                                   f"（示例：夏亚·阿兹纳布尔，本名卡斯巴尔·雷姆·戴肯，是《机动战士高达》系列核心角色，吉翁·什姆·戴肯之子，塞拉之兄。因父亲被害，为复仇化名潜入吉翁军校，获“赤色彗星”绰号。"
+                                   f"他一生使用多重身份，包括爱德华·玛斯、柯瓦特罗·巴吉纳等。性格理想主义却手段冷酷，因拉拉·辛之死及目睹人类黑暗面而走向极端。一年战争中，他驾驶红色扎古，以“红色有角三倍速”闻名，与宿敌阿姆罗·雷多次交锋。"
+                                   f"格里普斯战役中，他以柯瓦特罗身份加入AEUG，目睹战争残酷后对人类绝望。UC0093年，他建立第二次新吉翁，驾驶沙扎比发动“地球寒冷化作战”，企图用阿克西斯撞击地球促进人类进化。"
+                                   f"最终与阿姆罗驾驶的ν高达激战，虽战败但阿克西斯被神秘力量推开，两人失踪。夏亚是高达系列首位“面具男”，面具象征其隐藏身份与复杂内心。其角色原型参考红男爵与哈姆雷特，声优主要为池田秀一。"
+                                   f"他驾驶过吉翁号、百式、沙扎比等多台著名机体，对高达历史影响深远，是兼具魅力与悲剧色彩的复杂反派。 ##夏亚 ##夏亚·阿兹纳布尔 ##卡斯巴尔·雷姆·戴肯） "
+                                   f"<reference_url:https://baike.baidu.com/item/%E5%A4%8F%E4%BA%9A%C2%B7%E9%98%BF%E5%85%B9%E7%BA%B3%E5%B8%83%E5%B0%94/1285271><reference_url:https://zh.wikipedia.org/wiki/%E5%A4%8F%E4%BA%9E%C2%B7%E9%98%BF%E8%8C%B2%E7%B4%8D%E5%B8%83%E7%88%BE>"
+                                   f"你给出的总结：",
                         group_id, type=1
                     )
                     raw_observation = f"（爱丽丝在网络上对\"{subject}\"进行了一番搜索，得到了下面的信息）{web_summary}"
@@ -783,6 +784,10 @@ def convert_cq_to_message(content: str) -> Tuple[Union[str, Message, MessageSegm
 
 
 async def _send_response(group_chatter, user_id, response):
+    if "[SILENCE]" in response:
+        # 移除 [SILENCE] 标记，保留前面的内容（如果有）
+        response = response.split("[SILENCE]")[0].strip()
+
     """发送响应消息，包含表情图片、语音（如果开关开启），支持 CQ:at 转 @ 消息段，同时语音使用替换后的文本"""
     emoji_file = check_emotion(user_id, response)
     print(emoji_file)
@@ -800,7 +805,7 @@ async def _send_response(group_chatter, user_id, response):
         if text_no_emotion:   # 原 text_no_emotion 非空（即使转换后可能变成纯@用户名）
             await group_chatter.send(msg_obj)
         else:
-            await group_chatter.send("...")
+            return
 
     # 4. 发送语音（使用替换后的纯文本 text_with_at，并去除动作标记）
     if AUDIO_SWITCH:
