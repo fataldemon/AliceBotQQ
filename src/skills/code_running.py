@@ -87,21 +87,21 @@ class Sandbox:
     def _write_code_file(self, language: str, code: str) -> Path:
         filename = "script.py" if language == "python" else "script.sh"
         script_path = self.workdir / filename
-        script_path.write_text(code)
+        script_path.write_text(code, encoding='utf-8')  # 写入用 UTF-8
         if language == "bash":
             script_path.chmod(0o755)
         return script_path
 
     def _exec_in_container(self, cmd: list) -> Tuple[str, str, Optional[int]]:
-        """在容器中执行命令，返回 (stdout, stderr, exit_code)"""
         if not self.container_id:
-            raise RuntimeError("容器未启动，请先调用 _start_container")
+            raise RuntimeError("容器未启动")
         exec_cmd = ["docker", "exec", self.container_id] + cmd
         try:
             result = subprocess.run(
                 exec_cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',  # 输出解码用 UTF-8
                 timeout=self.timeout_sec,
                 check=False
             )
@@ -115,7 +115,7 @@ class Sandbox:
 
         # 1. 写入代码文件
         script_path = self._write_code_file(language, code)
-
+        # print(code)
         # 2. 启动容器（如果尚未启动）
         if not self.container_id:
             self.container_id = self._start_container(language)

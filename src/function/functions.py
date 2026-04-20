@@ -155,7 +155,7 @@ func_access_website = {
     }
 func_run_code = {
     "name": "run_code_in_sandbox",
-    "description": "在安全的 Docker 沙盒环境中执行 Python 或 Bash 代码，返回标准输出、错误输出和退出码。适用于隔离执行用户提供的动态代码片段。",
+    "description": "在安全的沙盒环境中运行 Python 或 Bash 代码，返回标准输出、错误输出和退出码。适用于隔离运行用户提供的动态代码片段。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -170,5 +170,52 @@ func_run_code = {
             }
         },
         "required": ["language", "code"]
+    }
+}
+func_write_file = {
+    "name": "write_file",
+    "description": "在 /game_workspace 目录下写入或覆盖任意类型的文件（如 .py, .json, .txt, .html 等）。如果目录不存在则自动创建。返回操作成功或失败的信息。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "要创建的文件名，可以包含扩展名，例如 'main.py'、'data.json'、'note.txt'。不允许包含路径分隔符或 '..'，以防止路径遍历攻击。"
+            },
+            "content": {
+                "type": "string",
+                "description": "要写入文件的完整内容（文本格式）。"
+            }
+        },
+        "required": ["filename", "content"]
+    }
+}
+func_list_code_files = {
+    "name": "list_code_files",
+    "description": "列出“游戏开发部”工作空间（目录）下的所有代码文件（仅普通文件，不包含子目录）。可以按文件扩展名过滤。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "extension": {
+                "type": "string",
+                "description": "可选参数，只返回具有指定扩展名的文件，例如 '.py'。如果省略或为 null，则返回所有文件。",
+                "default": None
+            }
+        },
+        "required": []
+    }
+}
+func_read_code_file = {
+    "name": "read_code_file",
+    "description": "读取“游戏开发部”工作空间（目录）下指定文件的完整内容。返回文件内容字符串或错误信息。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "要读取的文件名，例如 'main.py'。不允许包含路径分隔符或 '..'。"
+            }
+        },
+        "required": ["filename"]
     }
 }

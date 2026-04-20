@@ -24,9 +24,18 @@ def get_general_tools():
         func.func_search_on_internet,
         format_move(func.func_move, steps=0, school_id=0, area_id=0),
         func.func_access_website,
-        func.func_run_code
+        func.func_run_code,
+        func.func_write_code_file,
+        func.func_list_code_files,
+        func.func_read_code_file,
     ]
-    available_actions = "[sword_of_light],[search_on_internet],[move],[access_website],[run_code_in_sandbox]"
+    available_actions = "[sword_of_light]," \
+                        "[search_on_internet]," \
+                        "[move],[access_website]," \
+                        "[run_code_in_sandbox]," \
+                        "[write_code_file]," \
+                        "[read_code_file]," \
+                        "[list_code_files]"
     set_available_functions(available_actions)
     if check_railway():
         functions.append(format_railway(func.func_railway))
@@ -100,6 +109,9 @@ skill_handlers: Dict[str, Callable] = {
     "search_on_internet": make_handler("search_on_internet", [("query", "查询参数不能为空！")]),
     "access_website": make_handler("access_website", [("url", "URL地址不能为空！")]),
     "run_code_in_sandbox": make_handler("run_code_in_sandbox", [("language", "代码种类不能为空！"), ("code", "代码不能为空！")]),
+    "write_file": make_handler("write_file_service", [("filename", "文件名不能为空！"), ("content", "文件内容不能为空！")]),
+    "list_code_files": make_handler("list_code_files_service", []),   # 无必需参数
+    "read_code_file": make_handler("read_code_file_service", [("filename", "文件名不能为空！")]),
 }
 
 

@@ -1,8 +1,10 @@
 import asyncio
+from typing import Optional
 
 import src.skills.game_status_process as game
 from src.skills.online_search import online_search_func, access_page_func
 from src.skills.code_running import run_in_sandbox
+from src.skills.game_development import read_code_file, write_file, list_code_files
 from src.dao.status import move_position, move_default_position, \
     get_available_move_targets, get_available_railway_targets, get_available_areas, get_available_schools
 
@@ -150,3 +152,49 @@ async def run_code_in_sandbox(language: str, code: str):
     else:
         # 执行失败（非零退出码）
         return f"（爱丽丝的代码执行失败了！退出码 {exit_code}）\n<标准输出>：{stdout}\n<标准错误>：{stderr}"
+
+
+async def write_file_service(filename: str, content: str) -> str:
+    """
+    异步写入/覆盖任意类型的文件到 ./game_workspace 目录
+    """
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, write_file, filename, content)
+
+    if result["success"]:
+        return f"（成功写入文件）\n{result['message']}"
+    else:
+        return f"（写入文件失败）\n{result['message']}"
+
+
+async def list_code_files_service(extension: Optional[str] = None) -> str:
+    """
+    异步列出 ./game_workspace 目录下的代码文件列表
+    """
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, list_code_files, extension)
+
+    if result["success"]:
+        files = result["data"]
+        if files:
+            file_list = "\n".join(f"  - {f}" for f in files)
+            return f"（成功获取文件列表，共 {len(files)} 个文件）\n<文件列表>：\n{file_list}"
+        else:
+            return f"（成功获取文件列表，但目录为空）\n<文件列表>：\n（无文件）"
+    else:
+        return f"（列出文件失败）\n{result['message']}"
+
+
+async def read_code_file_service(filename: str) -> str:
+    """
+    异步读取 ./game_workspace 目录下指定文件的内容
+    """
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, read_code_file, filename)
+
+    if result["success"]:
+        content = result["data"]
+        # 如果内容过长可以截断，这里直接返回
+        return f"（成功读取文件 '{filename}'）\n<文件内容>：\n{content}"
+    else:
+        return f"（读取文件失败）\n{result['message']}"
