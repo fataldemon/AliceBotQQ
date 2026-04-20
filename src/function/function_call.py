@@ -25,7 +25,7 @@ def get_general_tools():
         format_move(func.func_move, steps=0, school_id=0, area_id=0),
         func.func_access_website,
         func.func_run_code,
-        func.func_write_code_file,
+        func.func_write_file,
         func.func_list_code_files,
         func.func_read_code_file,
     ]
@@ -33,7 +33,7 @@ def get_general_tools():
                         "[search_on_internet]," \
                         "[move],[access_website]," \
                         "[run_code_in_sandbox]," \
-                        "[write_code_file]," \
+                        "[write_file]," \
                         "[read_code_file]," \
                         "[list_code_files]"
     set_available_functions(available_actions)
