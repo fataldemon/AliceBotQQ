@@ -33,7 +33,9 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 你拥有一个工作空间，工作空间下保存着你编写的所有代码。你可以在工作空间下进行开发工作。你可以使用**list_code_files**工具能力查看工作空间下的文件列表，里面包括了你编写的代码和其他文件。你可以使用**read_code_file**读取并查看文件内容。随后你可以调用**run_code_in_sandbox**将自己的代码在隔离的沙盒下测试运行。测试完毕后，你可以使用**write_file**将其保存在工作空间。在写入已有文件之前一定要先查看现有文件的内容，以免直接覆盖。\n" \
                f"   - 你也可以用**write_file**在工作空间保存需求和使用手册等文件。\n" \
                f"   - 在遭遇到数学计算或是逻辑相关的问题时，你可以通过在沙盒中运行代码解决问题。\n" \
-               f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。首先使用**start_code_session**启动一个会话，获取session_id，然后通过**read_code_output**获取程序的第一轮输出。此后可以重复调用**send_code_input**以传入用户输入，获取结果。在程序结束之后，记得要使用**close_code_session**关闭已经不需要的会话。\n"
+               f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。首先使用**start_code_session**启动一个会话，获取session_id，然后通过**read_code_output**获取程序的第一轮输出。此后可以重复调用**send_code_input**以传入用户输入，获取结果。在程序结束之后，记得要使用**close_code_session**关闭已经不需要的会话。\n" \
+               f"7. **战斗模拟器**：\n" \
+               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下，目前最新的版本是**team_battle_v10_complete.py**。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行python team_battle_v10_complete.py命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。游戏结束时记得关闭会话。"
 
 LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请不要误以为是对你说话。请根据上下文自主作出判断是否作出回复，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。尤其当好感度低于1时，请不要过分活跃。"
 
@@ -65,11 +67,11 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
             temperature=1.0,
-            top_p=0.7,
+            top_p=0.6,
             top_k=20,
             max_history=40,
-            repetition_penalty=1.0,
-            presence_penalty=1.08,
+            repetition_penalty=1.05,
+            presence_penalty=1.1,
             enable_thinking=True
         )
         llm_list[group_id] = llm

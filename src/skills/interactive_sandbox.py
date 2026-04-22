@@ -3,24 +3,26 @@ import threading
 import queue
 import time
 import uuid
+from pathlib import Path
 from typing import Optional
+from src.skills.game_development import WORKSPACE
 
 
 _sessions = {}
 
 
 class InteractiveCodeSandbox:
-    """运行一段代码（Python或Bash），支持多轮输入（如游戏中的 input()）"""
-
     def __init__(
         self,
-        language: str,                 # "python" 或 "bash"
-        code: str,                     # 完整代码字符串
+        language: str,
+        code: str,
         image: str = "python:3.11-slim",
         memory_limit_mb: int = 256,
         cpu_limit: float = 1.0,
         network_enabled: bool = False,
-        timeout_sec: int = 60,         # 整个会话的最大运行时间（秒）
+        timeout_sec: int = 60,
+        workspace_host_path: Optional[str] = WORKSPACE,   # 宿主机工作空间路径
+        workspace_readonly: bool = True,              # 是否只读挂载
     ):
         self.language = language
         self.code = code
@@ -29,6 +31,8 @@ class InteractiveCodeSandbox:
         self.cpu_limit = cpu_limit
         self.network_enabled = network_enabled
         self.timeout_sec = timeout_sec
+        self.workspace_host_path = Path(workspace_host_path).resolve() if workspace_host_path else None
+        self.workspace_readonly = workspace_readonly
 
         self.process = None
         self.output_queue = queue.Queue()
@@ -41,16 +45,8 @@ class InteractiveCodeSandbox:
             if self.process is not None:
                 return
 
-            # 根据语言构建执行命令
-            if self.language == "python":
-                # 使用 -u 禁用缓冲
-                exec_cmd = ["python", "-u", "-c", self.code]
-            else:  # bash
-                # Bash 需要通过 -c 执行代码
-                exec_cmd = ["bash", "-c", self.code]
-
             docker_cmd = [
-                "docker", "run", "-i",           # 保持 stdin 打开
+                "docker", "run", "-i",
                 "--rm",
                 "--read-only",
                 "--network", "none" if not self.network_enabled else "bridge",
@@ -59,8 +55,25 @@ class InteractiveCodeSandbox:
                 "--cap-drop=ALL",
                 "--security-opt=no-new-privileges:true",
                 "-u", "1000:1000",
-                self.image,
-            ] + exec_cmd
+            ]
+
+            # 挂载工作空间（如果指定）
+            if self.workspace_host_path:
+                if not self.workspace_host_path.exists():
+                    raise FileNotFoundError(f"工作空间路径不存在: {self.workspace_host_path}")
+                mount_spec = f"{self.workspace_host_path}:/workspace"
+                if self.workspace_readonly:
+                    mount_spec += ":ro"
+                docker_cmd.extend(["-v", mount_spec])
+                docker_cmd.extend(["-w", "/workspace"])
+
+            docker_cmd.append(self.image)
+
+            # 执行代码
+            if self.language == "python":
+                docker_cmd.extend(["python", "-u", "-c", self.code])
+            else:  # bash
+                docker_cmd.extend(["bash", "-c", self.code])
 
             self.process = subprocess.Popen(
                 docker_cmd,
@@ -73,7 +86,6 @@ class InteractiveCodeSandbox:
             )
             self.start_time = time.time()
 
-            # 启动读取线程
             self.reader_thread = threading.Thread(target=self._read_output, daemon=True)
             self.reader_thread.start()
 
