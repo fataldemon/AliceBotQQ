@@ -46,6 +46,36 @@ def build_multi_modal_message(role: str, content: str) -> list:
     return {"role": role, "content": [{"type": "text", "text": content}]}
 
 
+def format_action_to_history(action_name: str, action_input_str: str) -> str:
+    """
+    将动作名称和 JSON 格式的参数字符串格式化为自定义标签字符串。
+
+    参数:
+        action_name (str): 动作名称，例如 "close_code_session"
+        action_input_str (str): JSON 格式的参数字符串，例如 '{"session_id": "code_392082_8963"}'
+
+    返回:
+        str: 格式化后的多行字符串
+
+    异常:
+        ValueError: 如果 action_input_str 不是合法的 JSON 对象
+    """
+    # 将字符串解析为字典
+    try:
+        action_inputs: Dict[str, Any] = json.loads(action_input_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"参数字符串不是合法的 JSON 格式: {action_input_str}") from e
+
+    # 生成标签格式
+    lines = [f"<function={action_name}>"]
+    for key, value in action_inputs.items():
+        lines.append(f"<parameter={key}>")
+        lines.append(str(value))
+        lines.append("</parameter>")
+    lines.append("</function>")
+    return "\n".join(lines)
+
+
 class Qwen(LLM):
     # 大模型参数表：
     temperature: float = 0.95
@@ -94,7 +124,7 @@ class Qwen(LLM):
             # 存储数据集
             self.record_dialog_in_file(get_json(self.conversations, ""))
             # temp_history = self.history[-self.max_history:]
-            int_index = 4
+            int_index = 10
             # while self.history[-int_index]["role"] != "user":
             #     int_index += 1
             await self.conclude_summary(int_index)
@@ -334,6 +364,7 @@ class Qwen(LLM):
         self.summary = await self.call_assistant(summary_prompt)
         return self.summary
 
+
     async def call_with_function(self, prompt: str, user_id: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
         """调用函数
         """
@@ -389,6 +420,7 @@ class Qwen(LLM):
                 action = resp_json['choices'][0]['message']['function_call']
                 action_name = action['name']
                 action_input = action['arguments']
+                print(f"{action_input}, {type(action_input)}")
                 try:
                     feedback = await skill_call(action_name, json.loads(action_input))
                 except json.decoder.JSONDecodeError:
@@ -398,20 +430,23 @@ class Qwen(LLM):
                         # 格式化数据集
                         self.conversations.append(create_conversation({"role": "assistant",
                                                                        "content": f"Thought: {thought}\nAnswer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
-                        tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                        # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                        tool_call = format_action_to_history(action_name, action_input)
                         self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
 
                     else:
                         # 格式化数据集
                         self.conversations.append(create_conversation({"role": "assistant",
                                                                        "content": f"Answer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
-                        tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                        # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                        tool_call = format_action_to_history(action_name, action_input)
                         self.history = self.history + [build_message("assistant", f"<think>\n\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
                 else:
                     # 格式化数据集
                     self.conversations.append(create_conversation({"role": "assistant",
                                                                    "content": f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"}))
-                    tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                    # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                    tool_call = format_action_to_history(action_name, action_input)
                     self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
                 self.processing_cache = None  # 清空缓存，避免重复生成历史数据
                 print(f"历史长度：{len(self.history)}")
@@ -436,8 +471,8 @@ class Qwen(LLM):
 
     async def send_feedback(self, feedback: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
         observation = self._construct_observation(prompt=feedback, tools=tools)
-        resp_json = await self._post(url=self.url, query=observation)
         try:
+            resp_json = await self._post(url=self.url, query=observation)
             finish_reason = resp_json['choices'][0]['finish_reason']
             # 如果过度思考就不给思考过程了
             if finish_reason == "overthink":
@@ -456,14 +491,16 @@ class Qwen(LLM):
                     self.conversations.append(create_conversation(
                         {"role": "assistant",
                          "content": f"Thought: {thought}\nAnswer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
-                    tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                    # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                    tool_call = format_action_to_history(action_name, action_input)
                     self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
                 else:
                     # 格式化数据集
                     self.conversations.append(create_conversation(
                         {"role": "assistant",
                          "content": f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"}))
-                    tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                    # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
+                    tool_call = format_action_to_history(action_name, action_input)
                     self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
 
                 print(f"历史长度：{len(self.history)}")

@@ -84,7 +84,7 @@ def read_code_file(filename: str) -> dict:
 # ---------- 使用示例 ----------
 if __name__ == "__main__":
     # 1. 写入 Python 文件
-    result_write = write_code_file("hello.py", "print('Hello from AI!')\nprint('Workspace ready.')")
+    result_write = write_file("hello.py", "print('Hello from AI!')\nprint('Workspace ready.')")
     print(result_write)
 
     # 2. 列出所有代码文件

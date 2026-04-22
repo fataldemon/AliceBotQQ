@@ -155,7 +155,7 @@ func_access_website = {
     }
 func_run_code = {
     "name": "run_code_in_sandbox",
-    "description": "在安全的沙盒环境中运行 Python 或 Bash 代码，返回标准输出、错误输出和退出码。适用于隔离运行用户提供的动态代码片段。",
+    "description": "在安全的沙盒环境中运行 Python 或 Bash 代码，返回标准输出、错误输出和退出码。适用于隔离运行用户提供的动态代码片段。运行目录在/workspace，其中包含了在工作空间里的所有文件。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -219,3 +219,50 @@ func_read_code_file = {
         "required": ["filename"]
     }
 }
+func_start_code_session = {
+    "name": "start_code_session",
+    "description": "启动一个交互式代码会话，运行指定的代码（支持 input() 交互）。返回会话ID。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "language": {"type": "string", "enum": ["python", "bash"]},
+            "code": {"type": "string", "description": "要运行的完整代码字符串"}
+        },
+        "required": ["language", "code"]
+    }
+}
+func_read_code_output = {
+    "name": "read_code_output",
+    "description": "读取会话中程序当前的输出。如果 wait=true，则等待直到有输出（适合等待游戏提示）。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string"},
+            "wait": {"type": "boolean"},
+            "timeout": {"type": "integer"}
+        },
+        "required": ["session_id"]
+    }
+}
+func_send_code_input = {
+    "name": "send_code_input",
+    "description": "向会话中的程序发送一行用户输入（例如游戏中的答案），并返回程序的新输出。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string"},
+            "user_input": {"type": "string"}
+        },
+        "required": ["session_id", "user_input"]
+    }
+}
+func_close_code_session = {
+    "name": "close_code_session",
+    "description": "结束代码会话，释放容器资源。",
+    "parameters": {
+        "type": "object",
+        "properties": {"session_id": {"type": "string"}},
+        "required": ["session_id"]
+    }
+}
+

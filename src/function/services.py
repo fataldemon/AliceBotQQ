@@ -2,11 +2,12 @@ import asyncio
 from typing import Optional
 
 import src.skills.game_status_process as game
-from src.skills.online_search import online_search_func, access_page_func
-from src.skills.code_running import run_in_sandbox
-from src.skills.game_development import read_code_file, write_file, list_code_files
 from src.dao.status import move_position, move_default_position, \
     get_available_move_targets, get_available_railway_targets, get_available_areas, get_available_schools
+from src.skills.code_running import run_in_sandbox
+from src.skills.game_development import read_code_file, write_file, list_code_files
+from src.skills.interactive_sandbox import InteractiveCodeSandbox, _sessions
+from src.skills.online_search import online_search_func, access_page_func
 
 
 def hikari_yo(target: str) -> str:
@@ -32,7 +33,8 @@ def move(option: str) -> str:
         elif option == 'S':
             result_info = move_position(-3)
         else:
-            print(f'option={option}, available={get_available_move_targets()}, ', option in get_available_move_targets())
+            print(f'option={option}, available={get_available_move_targets()}, ',
+                  option in get_available_move_targets())
             if option not in get_available_move_targets():
                 return "从当前地点没有去往目标地点的道路，请选择其他选项！"
             option_id = int(option)
@@ -198,3 +200,85 @@ async def read_code_file_service(filename: str) -> str:
         return f"（成功读取文件 '{filename}'）\n<文件内容>：\n{content}"
     else:
         return f"（读取文件失败）\n{result['message']}"
+
+
+async def start_code_session(language: str, code: str) -> str:
+    """
+    启动一个交互式代码会话（如命令行游戏），返回会话ID。
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        # 生成唯一会话ID
+        session_id = f"code_{int(asyncio.get_event_loop().time())}_{hash(code) % 10000}"
+        sandbox = InteractiveCodeSandbox(language=language, code=code)
+        # 启动沙盒（同步方法在线程池执行）
+        await loop.run_in_executor(None, sandbox.start)
+        _sessions[session_id] = sandbox
+        return f"（成功启动交互式代码会话）\n会话ID：{session_id}\n语言：{language.upper()}"
+    except Exception as e:
+        return f"（启动交互式代码会话失败）\n错误信息：{str(e)}"
+
+
+async def read_code_output(session_id: str, wait: bool = False, timeout: int = 30) -> str:
+    """
+    读取会话中程序当前的输出。若 wait=True 则阻塞直到有新输出或超时。
+    """
+    loop = asyncio.get_running_loop()
+    sandbox = _sessions.get(session_id)
+    if not sandbox:
+        return f"（读取输出失败）\n会话 {session_id} 不存在或已结束"
+
+    try:
+        if wait:
+            output = await loop.run_in_executor(None, sandbox.wait_for_output, timeout)
+        else:
+            output = await loop.run_in_executor(None, sandbox.read_output)
+
+        if output:
+            return f"（成功读取输出）\n<输出内容>：\n{output}"
+        else:
+            return f"（成功读取输出，但当前无输出）\n（程序可能还在等待输入或已结束）"
+    except Exception as e:
+        return f"（读取输出失败）\n错误信息：{str(e)}"
+
+
+async def send_code_input(session_id: str, user_input: str) -> str:
+    """
+    向会话中的程序发送一行用户输入，并返回程序的新输出。
+    """
+    loop = asyncio.get_running_loop()
+    sandbox = _sessions.get(session_id)
+    if not sandbox:
+        return f"（发送输入失败）\n会话 {session_id} 不存在或已结束"
+
+    try:
+        # 发送输入
+        await loop.run_in_executor(None, sandbox.send_input, user_input)
+        # 等待一小段时间让程序处理并产生输出
+        await asyncio.sleep(0.3)
+        # 读取新输出
+        output = await loop.run_in_executor(None, sandbox.read_output)
+        if output:
+            return f"（成功发送输入）\n输入内容：{user_input}\n<程序输出>：\n{output}"
+        else:
+            return f"（成功发送输入）\n输入内容：{user_input}\n（程序没有产生输出，可能已结束或仍在处理）"
+    except Exception as e:
+        return f"（发送输入失败）\n错误信息：{str(e)}"
+
+
+async def close_code_session(session_id: str) -> str:
+    """
+    结束代码会话，释放容器资源。
+    """
+    loop = asyncio.get_running_loop()
+    sandbox = _sessions.pop(session_id, None)
+    if not sandbox:
+        return f"（关闭会话失败）\n会话 {session_id} 不存在或已结束"
+
+    try:
+        await loop.run_in_executor(None, sandbox.close)
+        return f"（成功关闭会话）\n会话ID：{session_id}\n资源已清理"
+    except Exception as e:
+        return f"（关闭会话时出错）\n错误信息：{str(e)}"
+
+

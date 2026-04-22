@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 import re
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional, List
 
 from nonebot import on_message, on_notice, get_bot
 from nonebot import on_command
@@ -30,11 +30,12 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 你已经熟知了许多网络梗。若用户发送内容标记为 **[发送了一个表情包]**，请将其视为**梗图/表情包**。这通常是幽默、夸张或流行文化引用，请尝试理解对方想要表达的意思或者情感，并以轻松、调侃、配合玩梗的态度回复。对于涉及的陌生的梗或者人物，可以用**search_on_internet**的工具能力检索相关知识\n" \
                f"   - 若标记为 **[发送了一张图片]**，则正常结合图片内容进行符合人设的评价。\n" \
                f"6. **代码开发**：\n" \
-               f"   - 你可以在工作空间下进行开发工作。你可以使用**list_code_files**工具能力查看工作空间下的文件列表，随后使用**read_code_file**读取并查看文件内容。你可以调用**run_code_in_sandbox**将自己的代码在隔离的沙盒下测试运行，测试完毕后使用**write_file**将其保存在工作空间。\n" \
+               f"   - 你拥有一个工作空间，工作空间下保存着你编写的所有代码。你可以在工作空间下进行开发工作。你可以使用**list_code_files**工具能力查看工作空间下的文件列表，里面包括了你编写的代码和其他文件。你可以使用**read_code_file**读取并查看文件内容。随后你可以调用**run_code_in_sandbox**将自己的代码在隔离的沙盒下测试运行。测试完毕后，你可以使用**write_file**将其保存在工作空间。在写入已有文件之前一定要先查看现有文件的内容，以免直接覆盖。\n" \
                f"   - 你也可以用**write_file**在工作空间保存需求和使用手册等文件。\n" \
-               f"   - 在遭遇到数学计算或是逻辑相关的问题时，你可以通过在沙盒中运行代码解决问题。"
+               f"   - 在遭遇到数学计算或是逻辑相关的问题时，你可以通过在沙盒中运行代码解决问题。\n" \
+               f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。首先使用**start_code_session**启动一个会话，获取session_id，然后通过**read_code_output**获取程序的第一轮输出。此后可以重复调用**send_code_input**以传入用户输入，获取结果。在程序结束之后，记得要使用**close_code_session**关闭已经不需要的会话。\n"
 
-LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请根据上下文自主作出判断是否对你说话。如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。尤其当好感度低于1时，请不要表现得过分积极。"
+LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请不要误以为是对你说话。请根据上下文自主作出判断是否作出回复，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。尤其当好感度低于1时，请不要过分活跃。"
 
 THREAD_LOCKER: bool = True  # 对话线程锁
 ACTIVE_SWITCH: bool = True  # 主动读取对话开关
@@ -64,10 +65,10 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
             temperature=1.0,
-            top_p=0.6,
+            top_p=0.7,
             top_k=20,
-            max_history=16,
-            repetition_penalty=1.05,
+            max_history=40,
+            repetition_penalty=1.0,
             presence_penalty=1.08,
             enable_thinking=True
         )
@@ -376,7 +377,7 @@ async def process_message(event: Event, user_id: str):
             line += f"[分享了{str(seg.data)}]"
         elif seg.type == "record":
             record_url = seg.data.get("url")
-            line += f"[发送了一条语音][voice,url={url}]"
+            line += f"[发送了一条语音][voice,url={record_url}]"
         elif seg.type == "at":
             at_userid = seg.data["qq"]
             at_username = get_talker_name(at_userid)
@@ -589,7 +590,7 @@ async def chat(event: Event):
         await asyncio.sleep(0.1)
     THREAD_LOCKER = False
     # 等待0.5秒，让同时消息进来
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(1)
     # 从缓冲区按顺序取出消息，然后清空缓冲区
     if message_buffer.get(group_id) is not None and len(message_buffer.get(group_id)) != 0:
         for pre_message in message_buffer.get(group_id):
@@ -726,7 +727,7 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                 observation = feedback
             else:
                 tools = get_general_tools()
-                await group_chatter.send(f"[System]{feedback}")
+                await send_message_with_split(group_chatter, f"[System]{feedback}")
                 observation = feedback
 
         # 调用反馈
@@ -788,12 +789,137 @@ def convert_cq_to_message(content: str) -> Tuple[Union[str, Message, MessageSegm
     return msg_obj, text_result
 
 
+async def send_message_with_split(
+        sender,  # 具有 send 方法的对象，如 group_chatter
+        msg_obj: Union[Message, str, List[MessageSegment]],
+        emoji_file: Optional[str] = None,
+        max_len: int = 3000
+) -> None:
+    """
+    发送消息，自动处理超长分段，保持非文本段（如 @、回复）的原始位置。
+    如果提供了 emoji_file，图片会附加在第一段消息的最前面。
+
+    参数:
+        sender: 具有 async send(message) 方法的对象（如 nonebot 的 Bot 或事件回复器）
+        msg_obj: 消息内容，可以是 Message、str 或 MessageSegment 列表
+        emoji_file: 可选的图片文件路径
+        max_len: 单段最大字符数（默认 3000）
+    """
+    # 1. 统一转换为 Message 对象
+    if isinstance(msg_obj, str):
+        msg_obj = Message(msg_obj)
+    elif isinstance(msg_obj, list):
+        msg_obj = Message(msg_obj)
+    elif not isinstance(msg_obj, Message):
+        msg_obj = Message(str(msg_obj))
+
+    # 如果没有消息内容且无图片，直接返回
+    if not msg_obj and not emoji_file:
+        return
+
+    # 2. 将消息对象转换为带占位符的文本序列
+    placeholder_map = {}
+    placeholder_counter = 0
+    sequence = []  # 元素为 ("text", str) 或 ("placeholder", placeholder_str)
+    current_text = []
+
+    def flush_text():
+        if current_text:
+            sequence.append(("text", "".join(current_text)))
+            current_text.clear()
+
+    for seg in msg_obj:
+        if seg.type == "text":
+            current_text.append(seg.data.get("text", ""))
+        else:
+            flush_text()
+            placeholder = f"__PLACEHOLDER_{placeholder_counter:05d}__"
+            placeholder_counter += 1
+            placeholder_map[placeholder] = seg
+            sequence.append(("placeholder", placeholder))
+
+    flush_text()  # 最后的文本
+
+    # 3. 按最大长度切分序列（占位符不计长度，且不会被截断）
+    chunks = []  # 每个 chunk 是一个列表，元素为 ("text", str) 或 ("placeholder", placeholder_str)
+    current_chunk = []
+    current_len = 0
+
+    for typ, content in sequence:
+        if typ == "placeholder":
+            # 占位符直接加入，不计长度
+            current_chunk.append((typ, content))
+        else:  # text
+            text_block = content
+            # 如果当前 chunk 为空且文本块超长，需要暴力切分
+            if not current_chunk and len(text_block) > max_len:
+                # 直接切分成多个纯文本块
+                for i in range(0, len(text_block), max_len):
+                    chunks.append([("text", text_block[i:i + max_len])])
+                continue
+
+            # 正常情况：尝试加入当前 chunk
+            if current_len + len(text_block) <= max_len:
+                current_chunk.append((typ, text_block))
+                current_len += len(text_block)
+            else:
+                # 能切多少切多少
+                remaining = max_len - current_len
+                if remaining > 0:
+                    part1 = text_block[:remaining]
+                    part2 = text_block[remaining:]
+                    current_chunk.append(("text", part1))
+                    chunks.append(current_chunk)
+                    # 处理剩余部分
+                    current_chunk = []
+                    current_len = 0
+                    # 剩余部分可能仍然很长，循环切分
+                    while len(part2) > max_len:
+                        chunks.append([("text", part2[:max_len])])
+                        part2 = part2[max_len:]
+                    if part2:
+                        current_chunk = [("text", part2)]
+                        current_len = len(part2)
+                else:
+                    # remaining == 0，当前 chunk 刚好满
+                    chunks.append(current_chunk)
+                    current_chunk = []
+                    current_len = 0
+                    # 重新处理当前文本块（递归循环）
+                    part = text_block
+                    while len(part) > max_len:
+                        chunks.append([("text", part[:max_len])])
+                        part = part[max_len:]
+                    if part:
+                        current_chunk = [("text", part)]
+                        current_len = len(part)
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    # 4. 发送各个分段
+    for idx, chunk in enumerate(chunks):
+        segments = []
+        for typ, content in chunk:
+            if typ == "text":
+                segments.append(MessageSegment.text(content))
+            else:  # placeholder
+                segments.append(placeholder_map[content])
+
+        # 第一段附加图片
+        if idx == 0 and emoji_file:
+            final_msg = [MessageSegment.image(file=emoji_file)] + segments
+        else:
+            final_msg = segments
+
+        if final_msg:
+            await sender.send(final_msg)
+
+
 async def _send_response(group_chatter, user_id, response):
     if "[SILENCE]" in response:
-        # 移除 [SILENCE] 标记，保留前面的内容（如果有）
         response = response.split("[SILENCE]")[0].strip()
 
-    """发送响应消息，包含表情图片、语音（如果开关开启），支持 CQ:at 转 @ 消息段，同时语音使用替换后的文本"""
     emoji_file = check_emotion(user_id, response)
     print(emoji_file)
 
@@ -803,18 +929,11 @@ async def _send_response(group_chatter, user_id, response):
     # 2. 转换 CQ:at 为消息对象和纯文本（@用户名 形式）
     msg_obj, text_with_at = convert_cq_to_message(text_no_emotion)
 
-    # 3. 发送图片 + 消息对象
-    if emoji_file:
-        await group_chatter.send(MessageSegment.image(file=emoji_file) + msg_obj)
-    else:
-        if text_no_emotion:   # 原 text_no_emotion 非空（即使转换后可能变成纯@用户名）
-            await group_chatter.send(msg_obj)
-        else:
-            return
+    # 3. 使用独立函数发送消息（自动分段、保持位置、合并图片）
+    await send_message_with_split(group_chatter, msg_obj, emoji_file)
 
-    # 4. 发送语音（使用替换后的纯文本 text_with_at，并去除动作标记）
+    # 4. 发送语音（原有逻辑不变）
     if AUDIO_SWITCH:
-        # 去除动作标记，得到最终用于语音的文本
         clean_text = remove_action(text_with_at)
         if TRANSLATE_SWITCH:
             translated = get_translation(clean_text, "jp")
