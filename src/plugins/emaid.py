@@ -35,7 +35,9 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 在遭遇到数学计算或是逻辑相关的问题时，你可以通过在沙盒中运行代码解决问题。\n" \
                f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。首先使用**start_code_session**启动一个会话，获取session_id，然后通过**read_code_output**获取程序的第一轮输出。此后可以重复调用**send_code_input**以传入用户输入，获取结果。在程序结束之后，记得要使用**close_code_session**关闭已经不需要的会话。\n" \
                f"7. **战斗模拟器**：\n" \
-               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下，目前最新的版本是**team_battle_v10_complete.py**。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行python team_battle_v10_complete.py命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。游戏结束时记得关闭会话。"
+               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行python main.py命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。在游玩过程中，你可以通过**send_code_input**持续交互。" \
+               f"   - 重复游玩战斗模拟器时可以同一个session_id，避免同时打开多个会话。" \
+               f"   - 在游戏结束时记得关闭会话。"
 
 LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请不要误以为是对你说话。请根据上下文自主作出判断是否作出回复，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。尤其当好感度低于1时，请不要过分活跃。"
 
@@ -71,7 +73,7 @@ def getLLM(group_id: str) -> ChatGLM:
             top_k=20,
             max_history=40,
             repetition_penalty=1.05,
-            presence_penalty=1.1,
+            presence_penalty=1.08,
             enable_thinking=True
         )
         llm_list[group_id] = llm
@@ -209,7 +211,7 @@ async def get_summary(group_id: str) -> str:
     return summary
 
 
-async def send_feedback(feedback: str, group_id: str, tools) -> tuple:
+async def send_feedback(feedback: str, user_id: str, group_id: str, tools) -> tuple:
     """
     通过接口向LLM发送API返回结果
     :param group_id: 群组ID
@@ -218,7 +220,7 @@ async def send_feedback(feedback: str, group_id: str, tools) -> tuple:
     :return:LLM返回的聊天内容
     """
     llm = getLLM(group_id)
-    thought, response, feedback, finish_reason, function = await llm.send_feedback(feedback, tools=tools, stop=None)
+    thought, response, feedback, finish_reason, function = await llm.send_feedback(feedback, user_id=user_id, tools=tools, stop=None)
     return thought, response, feedback, finish_reason, function
 
 
@@ -592,7 +594,7 @@ async def chat(event: Event):
         await asyncio.sleep(0.1)
     THREAD_LOCKER = False
     # 等待0.5秒，让同时消息进来
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.1)
     # 从缓冲区按顺序取出消息，然后清空缓冲区
     if message_buffer.get(group_id) is not None and len(message_buffer.get(group_id)) != 0:
         for pre_message in message_buffer.get(group_id):
@@ -734,7 +736,7 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
 
         # 调用反馈
         thought, response, feedback, finish_reason, function = await send_feedback(
-            observation, group_id, tools
+            observation, user_id, group_id, tools
         )
         print(f"Thought: {thought}")
 

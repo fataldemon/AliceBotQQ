@@ -1,5 +1,6 @@
 import asyncio
 from typing import List, Tuple, Callable, Dict, Union, Any
+from langchain.llms.base import LLM
 
 from src.dao.status import find_route, check_railway, get_available_functions, set_available_functions
 import src.function.functions as func

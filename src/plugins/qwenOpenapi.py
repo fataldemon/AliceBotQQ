@@ -13,6 +13,7 @@ from langchain.llms.base import LLM
 from src.function.function_call import skill_call
 from src.plugins.dataset_collection import create_first_conversation, create_conversation, get_json
 from src.plugins.emotion import remove_emotion
+from src.dao.status import master_id
 
 logging.basicConfig(level=logging.INFO)
 
@@ -93,6 +94,9 @@ class Qwen(LLM):
     conversations = []
     summary = ""
     functions = []
+
+    code_zone = []
+    document_zone =[]
     # 部署大模型服务的url
     url = "http://localhost:8000/v1/chat/completions"
     url_assistant = "http://localhost:8000/v1/assistant/completions"
@@ -138,6 +142,8 @@ class Qwen(LLM):
 
     # 判断打断条件
     def check_interruption(self, user_id) -> bool:
+        if user_id == master_id:
+            return True
         if self.processing_cache is not None and self.processing_cache.get("user_id") == user_id:
             time_diff = datetime.now() - self.processing_cache.get("timestamp")
             if time_diff.seconds < 8:
@@ -249,7 +255,7 @@ class Qwen(LLM):
         }
         return query
 
-    def _construct_observation(self, prompt: str, tools, **kwargs) -> Dict:
+    def _construct_observation(self, prompt: str, tools, request_id=None, **kwargs) -> Dict:
         """构造请求体
         """
         embedding = []
@@ -266,6 +272,8 @@ class Qwen(LLM):
             "top_p": self.top_p,
             "stream": False,  # 不启用流式API
         }
+        if request_id is not None:
+            query["request_id"] = request_id
         # 格式化数据集
         self.conversations.append(create_conversation({"role": "function", "content": f"Observation: {prompt}"}))
         self.history = messages
@@ -283,7 +291,7 @@ class Qwen(LLM):
     @classmethod
     async def _post(cls, url: str, query: Dict) -> Any:
         _headers = {"Content-Type": "application/json"}
-        timeout = aiohttp.ClientTimeout(total=120)  # 设置总超时
+        timeout = aiohttp.ClientTimeout(total=600)  # 设置总超时
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=_headers, json=query, timeout=timeout) as resp:
                 if resp.status == 200:
@@ -363,7 +371,6 @@ class Qwen(LLM):
                          f"记忆片段要求用讲述故事的语气，长度适中，需要保留对话历史中的人物和关键信息，并且反映最近的对话内容，思考过程尽量简略："
         self.summary = await self.call_assistant(summary_prompt)
         return self.summary
-
 
     async def call_with_function(self, prompt: str, user_id: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
         """调用函数
@@ -469,11 +476,21 @@ class Qwen(LLM):
         except Exception:
             return "", SLEEP_INFORMATION, "", "", ""
 
-    async def send_feedback(self, feedback: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
-        observation = self._construct_observation(prompt=feedback, tools=tools)
+    async def send_feedback(self, feedback: str, user_id: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
+        # 生成请求ID
+        timestamp = datetime.now()
+        request_id = f"{timestamp.strftime('%Y%m%d%H%M%S')}{user_id}"
+
+        # 进入缓存processing_cache，表示该请求正在处理
+        self.processing_cache = {"prompt": feedback, "user_id": user_id, "timestamp": timestamp, "request_id": request_id}
+
+        observation = self._construct_observation(prompt=feedback, tools=tools, request_id=request_id)
         try:
             resp_json = await self._post(url=self.url, query=observation)
             finish_reason = resp_json['choices'][0]['finish_reason']
+            if finish_reason == "abort":
+                self.processing_cache = None
+                return "", "[SILENCE]", "", finish_reason, ""
             # 如果过度思考就不给思考过程了
             if finish_reason == "overthink":
                 self.processing_cache = None  # 清空缓存，避免重复生成历史数据
