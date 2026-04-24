@@ -35,8 +35,8 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 在遭遇到数学计算或是逻辑相关的问题时，你可以通过在沙盒中运行代码解决问题。\n" \
                f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。首先使用**start_code_session**启动一个会话，获取session_id，然后通过**read_code_output**获取程序的第一轮输出。此后可以重复调用**send_code_input**以传入用户输入，获取结果。在程序结束之后，记得要使用**close_code_session**关闭已经不需要的会话。\n" \
                f"7. **战斗模拟器**：\n" \
-               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行python main.py命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。在游玩过程中，你可以通过**send_code_input**持续交互。" \
-               f"   - 重复游玩战斗模拟器时可以同一个session_id，避免同时打开多个会话。" \
+               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行**python main.py**命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。在游玩过程中，你可以通过**send_code_input**持续交互。" \
+               f"   - 你可以通过**git_command**工具管理你的代码，进行版本控制。" \
                f"   - 在游戏结束时记得关闭会话。"
 
 LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请不要误以为是对你说话。请根据上下文自主作出判断是否作出回复，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。尤其当好感度低于1时，请不要过分活跃。"
@@ -71,9 +71,9 @@ def getLLM(group_id: str) -> ChatGLM:
             temperature=1.0,
             top_p=0.6,
             top_k=20,
-            max_history=40,
+            max_history=50,
             repetition_penalty=1.05,
-            presence_penalty=1.08,
+            # presence_penalty=1.05,
             enable_thinking=True
         )
         llm_list[group_id] = llm
@@ -663,6 +663,7 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
     max_loop = 6
     while finish_reason == "function_call" and loop < max_loop:
         loop += 1
+        observation = ""
         if feedback != "":
             if function == "search_on_internet":
                 if "（爱丽丝在网络上对〖" in feedback and "〗词条进行了一番搜索，得到了一些信息）" in feedback:
@@ -670,7 +671,6 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                     locator_left = feedback.rfind("〖")
                     locator_right = feedback.rfind("〗")
                     subject = feedback[locator_left + 1:locator_right]
-                    await group_chatter.send(f"[System]正在搜索〖{subject}〗、总结信息中...")
                     web_summary = await send_to_assistant(
                         feedback + f"\n\n在400字以内总结上面关于\"{subject}\"的搜索结果。"
                                    f"输出时不需要换行符，并根据内容在末尾用##的方式加上搜索的核心关键词tag，多个tag用空格隔开。"
@@ -684,6 +684,21 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                                    f"你给出的总结：",
                         group_id, type=1
                     )
+                    await send_system_forward(
+                        group_id=group_id,
+                        messages=[
+                            MessageSegment.node_custom(
+                                user_id=bot_id,
+                                nickname="[SYSTEM]",
+                                content=f"正在搜索〖{subject}〗、总结信息中..."
+                            ),
+                            MessageSegment.node_custom(
+                                user_id=bot_id,
+                                nickname="[SYSTEM]",
+                                content=f"（爱丽丝在网络上对\"{subject}\"进行了一番搜索，得到了下面的信息）{web_summary}"
+                            )
+                        ]
+                    )
                     raw_observation = f"（爱丽丝在网络上对\"{subject}\"进行了一番搜索，得到了下面的信息）{web_summary}"
                     # 匹配从 <reference_url: 开始到第一个 > 结束的内容
                     pattern = r'<reference_url:[^>]*>'
@@ -696,13 +711,31 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                     steps = 1
                     tools = move_tool(steps, 0, 0)
                     desc = tools[0]["parameters"]["properties"]["options"]["description"]
-                    await group_chatter.send("[System]爱丽丝打算离开当前地点，正在考虑去往哪个区域。")
+                    await send_system_forward(
+                        group_id=group_id,
+                        messages=[
+                            MessageSegment.node_custom(
+                                user_id=bot_id,
+                                nickname="[SYSTEM]",
+                                content="爱丽丝打算离开当前地点，正在考虑去往哪个区域。"
+                            )
+                        ]
+                    )
                     observation = f"你打算离开当前地点，正在考虑去往哪个区域。你应该使用decide_area能力决定要前往的区域。\n{desc}"
                 elif feedback == "[EXIT_SCHOOL]":
                     steps = 2
                     tools = move_tool(steps, 0, 0)
                     desc = tools[0]["parameters"]["properties"]["options"]["description"]
-                    await group_chatter.send("[System]爱丽丝打算离开当前区域，正在考虑去往哪个校区。")
+                    await send_system_forward(
+                        group_id=group_id,
+                        messages=[
+                            MessageSegment.node_custom(
+                                user_id=bot_id,
+                                nickname="[SYSTEM]",
+                                content="爱丽丝打算离开当前区域，正在考虑去往哪个校区。"
+                            )
+                        ]
+                    )
                     observation = f"你打算离开当前地点，正在考虑去往哪个校区。你应该使用decide_school能力决定要前往的校区。\n{desc}"
                 elif feedback.isdigit():
                     if steps == 2:
@@ -710,28 +743,63 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                         tools = move_tool(steps, feedback, 0)
                         desc = tools[0]["parameters"]["properties"]["options"]["description"]
                         school = get_school(feedback)
-                        await group_chatter.send(
-                            f"[System]爱丽丝抵达了{school.school_name}的外围，正在考虑去往哪个区域。")
+                        await send_system_forward(
+                            group_id=group_id,
+                            messages=[
+                                MessageSegment.node_custom(
+                                    user_id=bot_id,
+                                    nickname="[SYSTEM]",
+                                    content=f"爱丽丝抵达了{school.school_name}的外围，正在考虑去往哪个区域。"
+                                )
+                            ]
+                        )
                         observation = f"你抵达了{school.school_name}的外围，正在考虑去往哪个区域。你应该使用decide_area能力决定要前往的区域。\n{desc}"
                     elif steps == 1:
                         steps -= 1
                         tools = move_tool(steps, 0, feedback)
                         desc = tools[0]["parameters"]["properties"]["options"]["description"]
                         area = get_area(feedback)
-                        await group_chatter.send(f"[System]爱丽丝抵达了{area.area_name}区域，正在考虑去往哪个地点。")
+                        await send_system_forward(
+                            group_id=group_id,
+                            messages=[
+                                MessageSegment.node_custom(
+                                    user_id=bot_id,
+                                    nickname="[SYSTEM]",
+                                    content=f"爱丽丝抵达了{area.area_name}区域，正在考虑去往哪个地点。"
+                                )
+                            ]
+                        )
                         observation = f"你抵达了{area.area_name}区域，正在考虑去往哪个地点。你应该使用move能力决定要前往的地点。\n{desc}"
                 else:
                     tools = get_general_tools()
                     steps = 0
-                    await group_chatter.send(f"[System]{feedback}")
+                    await send_system_forward(
+                        group_id=group_id,
+                        messages=[
+                            MessageSegment.node_custom(
+                                user_id=bot_id,
+                                nickname="[SYSTEM]",
+                                content=feedback
+                            )
+                        ]
+                    )
                     observation = feedback
             elif function == "access_website":
                 if "因为网络不佳的原因失败了" in feedback:
-                    await group_chatter.send(f"[System]{feedback}")
+                    await send_system_forward(
+                        group_id=group_id,
+                        messages=[
+                            MessageSegment.node_custom(
+                                user_id=bot_id,
+                                nickname="[SYSTEM]",
+                                content=feedback
+                            )
+                        ]
+                    )
                 observation = feedback
             else:
                 tools = get_general_tools()
-                await send_message_with_split(group_chatter, f"[System]{feedback}")
+                await send_forward_with_split(group_id=group_id, msg_obj=feedback)
                 observation = feedback
 
         # 调用反馈
@@ -793,21 +861,22 @@ def convert_cq_to_message(content: str) -> Tuple[Union[str, Message, MessageSegm
     return msg_obj, text_result
 
 
-async def send_message_with_split(
-        sender,  # 具有 send 方法的对象，如 group_chatter
-        msg_obj: Union[Message, str, List[MessageSegment]],
-        emoji_file: Optional[str] = None,
-        max_len: int = 3000
-) -> None:
-    """
-    发送消息，自动处理超长分段，保持非文本段（如 @、回复）的原始位置。
-    如果提供了 emoji_file，图片会附加在第一段消息的最前面。
+async def send_system_forward(group_id: str, messages: List[Union[Message, MessageSegment, str]]):
+    await get_bot(bot_id).send_group_forward_msg(
+        group_id=group_id,
+        message=messages
+    )
 
-    参数:
-        sender: 具有 async send(message) 方法的对象（如 nonebot 的 Bot 或事件回复器）
-        msg_obj: 消息内容，可以是 Message、str 或 MessageSegment 列表
-        emoji_file: 可选的图片文件路径
-        max_len: 单段最大字符数（默认 3000）
+
+def split_message_into_chunks(
+    msg_obj: Union[Message, str, List[MessageSegment]],
+    emoji_file: Optional[str] = None,
+    max_len: int = 300
+) -> List[List[MessageSegment]]:
+    """
+    将消息分割成多个块，每个块是一个 MessageSegment 列表。
+    如果提供了 emoji_file，它会插入到第一个块的开头。
+    返回的列表可以直接用于逐条发送或构造合并转发节点。
     """
     # 1. 统一转换为 Message 对象
     if isinstance(msg_obj, str):
@@ -817,11 +886,10 @@ async def send_message_with_split(
     elif not isinstance(msg_obj, Message):
         msg_obj = Message(str(msg_obj))
 
-    # 如果没有消息内容且无图片，直接返回
     if not msg_obj and not emoji_file:
-        return
+        return []
 
-    # 2. 将消息对象转换为带占位符的文本序列
+    # 2. 将消息对象转换为带占位符的文本序列（保留非文本段位置）
     placeholder_map = {}
     placeholder_counter = 0
     sequence = []  # 元素为 ("text", str) 或 ("placeholder", placeholder_str)
@@ -844,52 +912,45 @@ async def send_message_with_split(
 
     flush_text()  # 最后的文本
 
-    # 3. 按最大长度切分序列（占位符不计长度，且不会被截断）
+    # 3. 按最大长度切分序列（占位符不计长度，不会被截断）
     chunks = []  # 每个 chunk 是一个列表，元素为 ("text", str) 或 ("placeholder", placeholder_str)
     current_chunk = []
     current_len = 0
 
     for typ, content in sequence:
         if typ == "placeholder":
-            # 占位符直接加入，不计长度
-            current_chunk.append((typ, content))
+            current_chunk.append((typ, content))  # 占位符不占长度
         else:  # text
             text_block = content
-            # 如果当前 chunk 为空且文本块超长，需要暴力切分
+            # 极端情况：当前 chunk 为空且单块文本超长
             if not current_chunk and len(text_block) > max_len:
-                # 直接切分成多个纯文本块
                 for i in range(0, len(text_block), max_len):
-                    chunks.append([("text", text_block[i:i + max_len])])
+                    chunks.append([("text", text_block[i:i+max_len])])
                 continue
 
-            # 正常情况：尝试加入当前 chunk
             if current_len + len(text_block) <= max_len:
-                current_chunk.append((typ, text_block))
+                current_chunk.append(("text", text_block))
                 current_len += len(text_block)
             else:
-                # 能切多少切多少
                 remaining = max_len - current_len
                 if remaining > 0:
                     part1 = text_block[:remaining]
                     part2 = text_block[remaining:]
                     current_chunk.append(("text", part1))
                     chunks.append(current_chunk)
-                    # 处理剩余部分
                     current_chunk = []
                     current_len = 0
-                    # 剩余部分可能仍然很长，循环切分
+                    # 继续处理 part2
                     while len(part2) > max_len:
                         chunks.append([("text", part2[:max_len])])
                         part2 = part2[max_len:]
                     if part2:
                         current_chunk = [("text", part2)]
                         current_len = len(part2)
-                else:
-                    # remaining == 0，当前 chunk 刚好满
+                else:  # remaining == 0，当前 chunk 已满
                     chunks.append(current_chunk)
                     current_chunk = []
                     current_len = 0
-                    # 重新处理当前文本块（递归循环）
                     part = text_block
                     while len(part) > max_len:
                         chunks.append([("text", part[:max_len])])
@@ -901,7 +962,8 @@ async def send_message_with_split(
     if current_chunk:
         chunks.append(current_chunk)
 
-    # 4. 发送各个分段
+    # 4. 将每个 chunk 还原为 MessageSegment 列表，并插入图片（仅第一块）
+    result = []
     for idx, chunk in enumerate(chunks):
         segments = []
         for typ, content in chunk:
@@ -909,17 +971,56 @@ async def send_message_with_split(
                 segments.append(MessageSegment.text(content))
             else:  # placeholder
                 segments.append(placeholder_map[content])
-
-        # 第一段附加图片
         if idx == 0 and emoji_file:
-            final_msg = [MessageSegment.image(file=emoji_file)] + segments
-        else:
-            final_msg = segments
+            segments.insert(0, MessageSegment.image(file=emoji_file))
+        result.append(segments)
 
-        if final_msg:
-            await sender.send(final_msg)
+    return result
 
 
+async def send_forward_with_split(
+    group_id: str,
+    msg_obj: Union[Message, str, List[MessageSegment]],
+    emoji_file: Optional[str] = None,
+    max_len: int = 3000,
+) -> None:
+    """
+    发送消息，自动处理超长分段（使用合并转发）。
+    每个分段作为一个 node，图片放在第一个 node 内部。
+    """
+    chunks_segments = split_message_into_chunks(msg_obj, emoji_file, max_len)
+    if not chunks_segments:
+        return
+
+    # 构造合并转发节点列表
+    contents = []
+    for segments in chunks_segments:
+        node = MessageSegment.node_custom(
+            user_id=bot_id,          # 请确保 bot_id 在作用域内可用
+            nickname="[SYSTEM]",
+            content=Message(segments)
+        )
+        contents.append(node)
+
+    await send_system_forward(group_id=group_id, messages=contents)
+
+
+async def send_message_with_split(
+    sender,  # 具有 async send(message) 方法的对象，如 group_chatter
+    msg_obj: Union[Message, str, List[MessageSegment]],
+    emoji_file: Optional[str] = None,
+    max_len: int = 3000
+) -> None:
+    """
+    发送消息，自动处理超长分段（直接逐条发送）。
+    图片附加在第一段消息的最前面。
+    """
+    chunks_segments = split_message_into_chunks(msg_obj, emoji_file, max_len)
+    for segments in chunks_segments:
+        await sender.send(segments)
+
+
+# 修改后的 _send_response 函数调用示例
 async def _send_response(group_chatter, user_id, response):
     if "[SILENCE]" in response:
         response = response.split("[SILENCE]")[0].strip()
@@ -934,7 +1035,7 @@ async def _send_response(group_chatter, user_id, response):
     msg_obj, text_with_at = convert_cq_to_message(text_no_emotion)
 
     # 3. 使用独立函数发送消息（自动分段、保持位置、合并图片）
-    await send_message_with_split(group_chatter, msg_obj, emoji_file)
+    await send_message_with_split(group_chatter, msg_obj, emoji_file, max_len=3000)
 
     # 4. 发送语音（原有逻辑不变）
     if AUDIO_SWITCH:

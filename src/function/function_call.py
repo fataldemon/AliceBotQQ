@@ -32,7 +32,8 @@ def get_general_tools():
         func.func_start_code_session,
         func.func_read_code_output,
         func.func_send_code_input,
-        func.func_close_code_session
+        func.func_close_code_session,
+        func.func_git_command
     ]
     available_actions = "[sword_of_light]," \
                         "[search_on_internet]," \
@@ -44,7 +45,8 @@ def get_general_tools():
                         "[start_code_session]," \
                         "[read_code_output]," \
                         "[send_code_input]," \
-                        "[close_code_session]"
+                        "[close_code_session]" \
+                        "[git_command]"
     set_available_functions(available_actions)
     if check_railway():
         functions.append(format_railway(func.func_railway))
@@ -125,6 +127,7 @@ skill_handlers: Dict[str, Callable] = {
     "read_code_output": make_handler("read_code_output", [("session_id", "会话ID不能为空")]),
     "send_code_input": make_handler("send_code_input", [("session_id", "会话ID不能为空"), ("user_input", "输入不能为空")]),
     "close_code_session": make_handler("close_code_session", [("session_id", "会话ID不能为空")]),
+    "git_command": make_handler("git_command_service", [("git_command", "git 命令不能为空！")]),
 }
 
 

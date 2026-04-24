@@ -265,4 +265,23 @@ func_close_code_session = {
         "required": ["session_id"]
     }
 }
+func_git_command = {
+    "name": "git_command",
+    "description": "在固定工作空间（WORKSPACE）下执行安全的 git 命令。支持常见的 git 操作，如 status, log, diff, branch, add, commit, pull, push 等。禁止执行其他系统命令。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "git_command": {
+                "type": "string",
+                "description": "完整的 git 命令，例如 'git status' 或 'git log --oneline -5'"
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "命令超时时间（秒），默认30",
+                "default": 30
+            }
+        },
+        "required": ["git_command"]
+    }
+}
 
