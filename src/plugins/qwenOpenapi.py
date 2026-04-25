@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Mapping, Any
 import aiohttp
 import requests
 from langchain.llms.base import LLM
+from pydantic import Field
 
 from src.function.function_call import skill_call
 from src.plugins.dataset_collection import create_first_conversation, create_conversation, get_json
@@ -78,471 +79,368 @@ def format_action_to_history(action_name: str, action_input_str: str) -> str:
 
 
 class Qwen(LLM):
-    # 大模型参数表：
+    # ------------------ 字段声明（Pydantic 必需）------------------
     temperature: float = 0.95
     top_p: float = 0.7
-    top_k: int = None
-    repetition_penalty: float = None
-    presence_penalty: float = None
+    top_k: Optional[int] = None
+    repetition_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
     system: str = ""
-    enable_thinking = True  # 是否启用思考模式
-    max_history = 20  # 历史长度上限
-    embedding_buffer = []  # 存储服务端上次查询到的知识库嵌入条目的序号
-    # 处理中的消息的内容、用户名、时间戳和请求ID，格式应为{"prompt": "", "user_id": "", "timestamp": None, "request_id": ""}
-    processing_cache: Dict = None
-    history: Any = []  # 历史信息
-    conversations = []
-    summary = ""
-    functions = []
+    enable_thinking: bool = True
+    max_history: int = 20
+    max_code: int = 3
+    max_document: int = 3
+    group_name: str = ""
 
-    code_zone = []
-    document_zone =[]
-    # 部署大模型服务的url
-    url = "http://localhost:8000/v1/chat/completions"
-    url_assistant = "http://localhost:8000/v1/assistant/completions"
+    # 运行时状态（可变对象，默认值需在 __init__ 中重新初始化）
+    embedding_buffer: List = []      # 注意：Pydantic 会共享默认值，需在 __init__ 中重置
+    processing_cache: Optional[Dict] = None
+    history: List[Dict] = []
+    conversations: List = []
+    summary: str = ""
+    functions: List = []
+    code_zone: List = []
+    document_zone: List = []
+    last_reply: datetime = Field(default_factory=datetime.now)
 
-    # 群组名
-    group_name = ""
-    # 上次对话的时间
-    last_reply = datetime.now()
+    # 部署地址
+    url: str = "http://localhost:8000/v1/chat/completions"
+    url_assistant: str = "http://localhost:8000/v1/assistant/completions"
+
+    def __init__(self, **data):
+        # 先调用父类初始化（Pydantic 会处理字段赋值）
+        super().__init__(**data)
+        # 重置可变默认值，避免实例间共享
+        self.embedding_buffer = []
+        self.processing_cache = None
+        self.history = []
+        self.conversations = []
+        self.summary = ""
+        self.functions = []
+        self.code_zone = []
+        self.document_zone = []
+        self.last_reply = datetime.now()
 
     @property
     def _llm_type(self) -> str:
         return "gpt-3.5-turbo"
 
+    # ---------- 工作区管理 ----------
+    def _enter_zone(self, zone: List, file_name: str, content: str, max_len: int):
+        for idx, item in enumerate(zone):
+            if item.get("file_name") == file_name:
+                zone.pop(idx)
+                break
+        zone.append({"file_name": file_name, "content": content})
+        if len(zone) > max_len:
+            zone[:] = zone[-max_len:]
+
+    def enter_code_zone(self, file_name: str, code: str):
+        self._enter_zone(self.code_zone, file_name, code, self.max_code)
+
+    def enter_document_zone(self, file_name: str, doc: str):
+        self._enter_zone(self.document_zone, file_name, doc, self.max_document)
+
+    # ---------- 数据持久化 ----------
     def record_dialog_in_file(self, content: str):
-        current_date = datetime.now()
-        formatted_date = current_date.strftime("%Y-%m-%d")
-        file = f"MyDataset-{formatted_date}.json"
-        if not os.path.exists(file):
-            with open(file, 'a', encoding="utf-8") as f:
-                f.write(content)
-        else:
-            with open(file, 'a', encoding="utf-8") as f:
-                f.write(',\n' + content)
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        filename = f"MyDataset-{current_date}.jsonl"
+        with open(filename, 'a', encoding="utf-8") as f:
+            f.write(content + '\n')
         self.conversations = []
 
+    # ---------- 历史摘要与截断 ----------
     async def shorten_history(self):
-        # 总结历史并缩短上下文，以节省空间
-        if len(self.history) > self.max_history:
-            # 存储数据集
-            self.record_dialog_in_file(get_json(self.conversations, ""))
-            # temp_history = self.history[-self.max_history:]
-            int_index = 10
-            # while self.history[-int_index]["role"] != "user":
-            #     int_index += 1
-            await self.conclude_summary(int_index)
-            print(f"历史总结：{self.summary}")
-            user_content = self.history[-int_index:][0]["content"]
-            temp_history = [build_message("user", f"（{self.summary}）\n{user_content}")] + self.history[-int_index + 1:]
-            self.history = temp_history
-            print("Head of history: " + str(temp_history[0]))
+        if len(self.history) <= self.max_history:
+            print(f"历史长度：{len(self.history)}")
+            return
 
-        print(f"历史长度：{len(self.history)}")
+        self.record_dialog_in_file(get_json(self.conversations, ""))
+        cut_point = min(10, len(self.history) - 1)
+        # 确保截断点之前的消息是 user 角色
+        while cut_point > 0 and self.history[-cut_point]["role"] != "user":
+            cut_point -= 1
+        if cut_point == 0:
+            cut_point = 1
 
-    # 判断打断条件
-    def check_interruption(self, user_id) -> bool:
+        await self._conclude_summary(cut_point)
+
+        user_content = self.history[-cut_point]["content"] if self.history else ""
+        new_history = [
+                          build_message("user", f"（{self.summary}）\n{user_content}")
+                      ] + self.history[-cut_point + 1:]
+        self.history = new_history
+        print(f"历史截断完成，新长度：{len(self.history)}")
+
+    async def _conclude_summary(self, cut_point: int) -> str:
+        prev_summary = self.summary if self.summary else "无"
+        dialog_history = [msg["content"] for msg in self.history[:-cut_point] if "content" in msg]
+        summary_prompt = (
+            f"前情提要：{prev_summary}\n\n对话历史：{dialog_history}\n\n"
+            "综合上面的前情提要和对话历史中的剧情，为爱丽丝汇总成300字以内的记忆片段，"
+            "并提取出需要长期记忆的重要细节信息。记忆片段要求用讲述故事的语气，长度适中，"
+            "需要保留对话历史中的人物和关键信息，并且反映最近的对话内容，思考过程尽量简略："
+        )
+        self.summary = await self.call_assistant(summary_prompt)
+        return self.summary
+
+    # ---------- 打断与并发控制 ----------
+    def check_interruption(self, user_id: str) -> bool:
         if user_id == master_id:
             return True
-        if self.processing_cache is not None and self.processing_cache.get("user_id") == user_id:
-            time_diff = datetime.now() - self.processing_cache.get("timestamp")
-            if time_diff.seconds < 8:
+        if self.processing_cache and self.processing_cache.get("user_id") == user_id:
+            elapsed = (datetime.now() - self.processing_cache["timestamp"]).seconds
+            if elapsed < 8:
                 return True
         return False
 
-    def check_async_processing(self):
-        if self.processing_cache is not None:
-            return True
-        else:
-            return False
+    def check_async_processing(self) -> bool:
+        return self.processing_cache is not None
 
-    def _construct_query(self, prompt: str, tools, **kwargs) -> Dict:
-        """构造请求体
-        """
-        embedding = []
-        status = ""
-        request_id = ""
-        abort_id = None
-        for key, value in kwargs.items():
-            if key == "embedding":
-                embedding = value
-            elif key == "status":
-                status = value
-            elif key == "request_id":
-                request_id = value
-            elif key == "abort_id":
-                abort_id = value
-        prompt = prompt.replace("\n（提示：）", "")
-
-        time_diff = datetime.now() - self.last_reply
-        if self.history != [] and time_diff.seconds > 10 * 60:
-            if time_diff.seconds < 60 * 60:
-                minutes_diff = time_diff.seconds // 60
-                prompt = f"（{minutes_diff}分钟过去了。）\n{prompt}"
-            else:
-                self.history = []
-                # 存储数据集
-                self.record_dialog_in_file(get_json(self.conversations, ""))
-
-        print(f">>>>>>REQUEST_ID={request_id}<<<<<<<<<")
-        messages = self.history + [build_message("user", prompt)]
+    # ---------- 请求体构造（统一） ----------
+    def _build_base_query(
+        self,
+        messages: List[Dict],
+        tools: List,
+        extra_info: str = "",
+        request_id: str = "",
+        abort_id: Optional[str] = None,
+    ) -> Dict:
         query = {
             "character": "tendou_arisu",
             "functions": tools,
             "system": self.system,
             "model": "gpt-3.5-turbo",
             "messages": messages,
-            "information": f"{embedding}\n{status}",
+            "information": f"{extra_info}\n当前代码工作区：{self.code_zone}\n当前文档工作区：{self.document_zone}",
             "on_embedding": True,
             "enable_thinking": self.enable_thinking,
             "embeddings_buffer": self.embedding_buffer,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "request_id": request_id,
-            "stream": False,  # 不启用流式API
+            "stream": False,
         }
         if self.repetition_penalty is not None:
             query["repetition_penalty"] = self.repetition_penalty
         if self.presence_penalty is not None:
-            query["repetition_penalty"] = self.presence_penalty
+            query["presence_penalty"] = self.presence_penalty
         if self.top_k is not None:
             query["top_k"] = self.top_k
-        if abort_id is not None:
+        if abort_id:
             query["abort_id"] = abort_id
-        # 查找提示信息的位置，不加入历史
-        tip_p = prompt.rfind("\n（提示：")
-        if tip_p >= 0:
-            raw_prompt = prompt[:tip_p]
-        else:
-            raw_prompt = prompt
-
-        # 格式化数据集
-        if not self.history:
-            self.conversations.append(
-                create_first_conversation({"role": "user", "content": raw_prompt}, self.functions))
-        else:
-            self.conversations.append(create_conversation({"role": "user", "content": raw_prompt}))
-        self.history = self.history + [build_message("user", raw_prompt)]
-        # 存入历史之后就把缓存区的prompt清空，防止重复读取
-        if self.processing_cache is not None:
-            self.processing_cache["prompt"] = ""
-
-        # 记录上次会话时间
-        self.last_reply = datetime.now()
-
         return query
 
-    def _construct_assistant_query(self, prompt: str, tools, type: int, **kwargs) -> Dict:
-        """构造请求体
-        """
-        status = ""
-        for key, value in kwargs.items():
-            if key == "embedding":
-                embedding = value
-            elif key == "status":
-                status = value
+    def _construct_query(self, prompt: str, tools: List, **kwargs) -> Dict:
+        embedding = kwargs.get("embedding", [])
+        status = kwargs.get("status", "")
+        request_id = kwargs.get("request_id", "")
+        abort_id = kwargs.get("abort_id", None)
+
+        time_diff = (datetime.now() - self.last_reply).seconds
+        if self.history and time_diff > 10 * 60:
+            if time_diff < 3600:
+                minutes = time_diff // 60
+                prompt = f"（{minutes}分钟过去了。）\n{prompt}"
+            else:
+                self.history = []
+                self.record_dialog_in_file(get_json(self.conversations, ""))
+
+        clean_prompt = prompt.split("\n（提示：")[0] if "（提示：" in prompt else prompt
+
+        if not self.history:
+            self.conversations.append(create_first_conversation({"role": "user", "content": clean_prompt}, self.functions))
+        else:
+            self.conversations.append(create_conversation({"role": "user", "content": clean_prompt}))
+        self.history.append(build_message("user", clean_prompt))
+
+        if self.processing_cache:
+            self.processing_cache["prompt"] = ""
+
+        self.last_reply = datetime.now()
+
+        messages = self.history
+        extra_info = f"{embedding}\n{status}"
+        return self._build_base_query(messages, tools, extra_info, request_id, abort_id)
+
+    def _construct_assistant_query(self, prompt: str, tools: List, type_id: int, **kwargs) -> Dict:
+        embedding = kwargs.get("embedding", "")
+        status = kwargs.get("status", "")
         messages = [build_message("user", prompt)]
         query = {
             "functions": tools,
             "system": self.system,
             "model": "gpt-3.5-turbo",
             "messages": messages,
-            "embeddings": "",
+            "embeddings": embedding,
             "temperature": 0.6,
             "top_p": 0.95,
-            "stream": False,  # 不启用流式API
-            "type": type
+            "stream": False,
+            "type": type_id
         }
         return query
 
-    def _construct_observation(self, prompt: str, tools, request_id=None, **kwargs) -> Dict:
-        """构造请求体
-        """
-        embedding = []
-        for key, value in kwargs.items():
-            if key == "embedding":
-                embedding = value
-        messages = self.history + [build_message("function", prompt)]
-        query = {
-            "functions": tools,
-            "system": self.system,
-            "model": "gpt-3.5-turbo",
-            "messages": messages,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "stream": False,  # 不启用流式API
-        }
-        if request_id is not None:
-            query["request_id"] = request_id
-        # 格式化数据集
-        self.conversations.append(create_conversation({"role": "function", "content": f"Observation: {prompt}"}))
-        self.history = messages
-        return query
+    def _construct_observation(self, feedback: str, tools: List, **kwargs) -> Dict:
+        embedding = kwargs.get("embedding", [])
+        status = kwargs.get("status", "")
+        request_id = kwargs.get("request_id", "")
+        messages = self.history + [build_message("function", feedback)]
+        extra_info = f"{embedding}\n{status}"
+        return self._build_base_query(messages, tools, extra_info, request_id)
 
-    def clear_memory(self):
-        """
-        清除聊天记忆
-        :return:
-        """
-        self.history = []
-        # 存储数据集
-        self.record_dialog_in_file(get_json(self.conversations, ""))
-
+    # ---------- 网络请求 ----------
     @classmethod
-    async def _post(cls, url: str, query: Dict) -> Any:
-        _headers = {"Content-Type": "application/json"}
-        timeout = aiohttp.ClientTimeout(total=600)  # 设置总超时
+    async def _post(cls, url: str, query: Dict) -> Dict:
+        headers = {"Content-Type": "application/json"}
+        timeout = aiohttp.ClientTimeout(total=600)
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=_headers, json=query, timeout=timeout) as resp:
+            async with session.post(url, headers=headers, json=query, timeout=timeout) as resp:
                 if resp.status == 200:
-                    return await resp.json()  # 直接返回 JSON
+                    return await resp.json()
                 else:
-                    # 处理错误，可能抛出异常或返回错误信息
-                    raise Exception(f"HTTP {resp.status}")
+                    raise aiohttp.ClientResponseError(
+                        status=resp.status, message=f"HTTP {resp.status}", headers=resp.headers
+                    )
 
-    async def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs):
-        """调用函数
-        """
-        embedding = []
-        status = ""
-        for key, value in kwargs.items():
-            if key == "embedding":
-                embedding = value
-            elif key == "status":
-                status = value
-        # construct query
-        query = self._construct_query(prompt=prompt, embedding=embedding, status=status)
-        # self.record_dialog_in_file(role="user", content=prompt)
-        # post
-        resp_json = await self._post(url=self.url_assistant, query=query)
+    # ---------- 辅助处理函数调用结果 ----------
+    def _append_function_call_history(self, thought: str, answer: str, action_name: str, action_input: str):
+        tool_call_str = format_action_to_history(action_name, action_input)
+        if answer:
+            full_content = f"<think>\n{thought}\n</think>\n\n{answer}\n\n<tool_call>\n{tool_call_str}\n</tool_call>\n"
+            dataset_content = f"Thought: {thought}\nAnswer: {answer}\nAction: {action_name}\nAction Input: {action_input}"
+        else:
+            full_content = f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call_str}\n</tool_call>\n"
+            dataset_content = f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"
+
+        self.conversations.append(create_conversation({"role": "assistant", "content": dataset_content}))
+        self.history.append(build_message("assistant", full_content))
+
+    def _append_final_answer_history(self, thought: str, answer: str):
+        dataset_content = f"Thought: {thought}\nFinal Answer: {answer}"
+        self.conversations.append(create_conversation({"role": "assistant", "content": dataset_content}))
+        clean_answer = answer.replace("[SILENCE]", "").strip()
+        if not (clean_answer and remove_emotion(clean_answer)):
+            return
+        full_content = f"<think>\n{thought}\n</think>\n\n{clean_answer}"
+        self.history.append(build_message("assistant", full_content))
+
+    # ---------- 主要调用接口 ----------
+    async def call_with_function(self, prompt: str, user_id: str, tools: List, **kwargs) -> tuple:
+        abort_id = None
+        if self.processing_cache:
+            abort_id = self.processing_cache["request_id"]
+            prompt = f"{self.processing_cache['prompt']}\n{prompt}"
+
+        timestamp = datetime.now()
+        current_request_id = f"{timestamp.strftime('%Y%m%d%H%M%S')}{user_id}"
+        self.processing_cache = {"prompt": prompt, "user_id": user_id, "timestamp": timestamp, "request_id": current_request_id}
+
+        query = self._construct_query(prompt=prompt, tools=tools, request_id=current_request_id, abort_id=abort_id, **kwargs)
+
         try:
-            predictions = resp_json['choices'][0]['message']['content'].strip()
-            return predictions
-        except Exception:
-            return SLEEP_INFORMATION
+            resp_json = await self._post(self.url, query)
+        except Exception as e:
+            print(f"Request failed: {e}")
+            if self.processing_cache and self.processing_cache.get("request_id") == current_request_id:
+                self.processing_cache = None
+            return "", SLEEP_INFORMATION, "", "", ""
 
-    async def call_assistant(self, prompt: str, get_think: bool = False, tools=[], type: int = 0,
-                             stop: Optional[List[str]] = None, **kwargs) -> str:
-        """调用函数
-        """
-        embedding = []
-        status = ""
-        for key, value in kwargs.items():
-            if key == "embedding":
-                embedding = value
-            elif key == "status":
-                status = value
-        # construct query
-        query = self._construct_assistant_query(prompt=prompt, embedding=embedding, status=status, tools=tools,
-                                                type=type)
-        # self.record_dialog_in_file(role="user", content=prompt)
-        # post
-        resp_json = await self._post(url=self.url_assistant, query=query)
+        return await self._process_response(resp_json, current_request_id)
+
+    async def send_feedback(self, feedback: str, user_id: str, tools: List, **kwargs) -> tuple:
+        timestamp = datetime.now()
+        current_request_id = f"{timestamp.strftime('%Y%m%d%H%M%S')}{user_id}"
+        self.processing_cache = {"prompt": feedback, "user_id": user_id, "timestamp": timestamp, "request_id": current_request_id}
+
+        query = self._construct_observation(feedback=feedback, tools=tools, request_id=current_request_id, **kwargs)
+
+        try:
+            resp_json = await self._post(self.url, query)
+        except Exception as e:
+            print(f"Feedback request failed: {e}")
+            if self.processing_cache and self.processing_cache.get("request_id") == current_request_id:
+                self.processing_cache = None
+            return "", SLEEP_INFORMATION, "", "", ""
+
+        return await self._process_response(resp_json, current_request_id)
+
+    async def _process_response(self, resp_json: Dict, current_request_id: str) -> tuple:
+        finish_reason = resp_json['choices'][0]['finish_reason']
+        print(f">>>>>FINISH_REASON = {finish_reason}<<<<<<")
+        thought = resp_json['choices'][0].get('thought', '').strip()
+        predictions = resp_json['choices'][0]['message']['content'].strip()
+
+        def clear_my_cache():
+            if self.processing_cache and self.processing_cache.get("request_id") == current_request_id:
+                self.processing_cache = None
+
+        if finish_reason == "overthink":
+            clear_my_cache()
+            return "", OVERTHINK_INFORMATION, "", finish_reason, ""
+        if finish_reason == "abort":
+            clear_my_cache()
+            return "", "[SILENCE]", "", finish_reason, ""
+
+        if finish_reason == "function_call":
+            action = resp_json['choices'][0]['message']['function_call']
+            action_name = action['name']
+            action_input = action['arguments']
+            print(f"Action Input: {action_input}")
+            try:
+                args_dict = json.loads(action_input)
+                feedback = await skill_call(action_name, args_dict)
+                if action_name in ("read_code_file", "write_file"):
+                    filename = args_dict.get("filename", "")
+                    if filename.endswith(".md"):
+                        self.enter_document_zone(filename, feedback)
+                    else:
+                        self.enter_code_zone(filename, feedback)
+            except json.JSONDecodeError:
+                feedback = "（不合法的输入参数）"
+
+            self._append_function_call_history(thought, predictions, action_name, action_input)
+            clear_my_cache()
+            print(f"历史长度：{len(self.history)}")
+            return thought, predictions, feedback, finish_reason, action_name
+        else:
+            self.embedding_buffer = resp_json['choices'][0].get('embedding_list', [])
+            print(f"查到的设定信息编号为：{self.embedding_buffer}")
+            self._append_final_answer_history(thought, predictions)
+            clear_my_cache()
+            return thought, predictions, "", finish_reason, ""
+
+    # ---------- 辅助调用（无函数调用） ----------
+    async def call_assistant(self, prompt: str, get_think: bool = False, tools: List = None, type_id: int = 0, **kwargs) -> str:
+        if tools is None:
+            tools = []
+        query = self._construct_assistant_query(prompt, tools, type_id, **kwargs)
+        resp_json = await self._post(self.url_assistant, query)
         try:
             predictions = resp_json['choices'][0]['message']['content'].strip()
             if "<think>" in predictions and "</think>" in predictions:
-                index_t = predictions.rfind("</think>\n\n")
-                if index_t != -1:
-                    thought = predictions[:index_t + len("</think>")]
-                    thought = thought.replace("<think>", "").replace("</think>", "").strip()
-                    if thought == "":
-                        thought = "无"
-                    reply = predictions[index_t + len("</think>\n\n"):]
-                if get_think:
-                    predictions = f"【思路】\n{thought}\n\n【回答】\n{reply}"
-                else:
-                    predictions = reply
+                think_end = predictions.find("</think>")
+                if think_end != -1:
+                    thought = predictions[6:think_end].strip()
+                    reply = predictions[think_end + 8:].strip()
+                    if get_think:
+                        predictions = f"【思路】\n{thought}\n\n【回答】\n{reply}"
+                    else:
+                        predictions = reply
             return predictions
         except Exception:
             return SLEEP_INFORMATION
 
-    async def conclude_summary(self, cut_point) -> str:
-        if self.summary != "":
-            summary_temp = self.summary
-        else:
-            summary_temp = "无"
+    async def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs) -> str:
+        return await self.call_assistant(prompt, get_think=False, **kwargs)
 
-        dialog_history = []
-        for conversation in self.history[:-cut_point]:
-            dialog_history.append(conversation["content"])
-
-        summary_prompt = f"前情提要：{summary_temp}\n\n对话历史：{dialog_history}\n\n" \
-                         f"综合上面的前情提要和对话历史中的剧情，为爱丽丝汇总成300字以内的记忆片段，并提取出需要长期记忆的重要细节信息。" \
-                         f"记忆片段要求用讲述故事的语气，长度适中，需要保留对话历史中的人物和关键信息，并且反映最近的对话内容，思考过程尽量简略："
-        self.summary = await self.call_assistant(summary_prompt)
-        return self.summary
-
-    async def call_with_function(self, prompt: str, user_id: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
-        """调用函数
-        """
-        # 如果有正在处理的请求（既然已经进来了），就送去abort_id进行终止
-        abort_id = None
-        if self.processing_cache is not None:
-            abort_id = self.processing_cache["request_id"]
-            prompt = f"{self.processing_cache['prompt']}\n{prompt}"
-            self.processing_cache = None
-        # 生成请求ID
-        timestamp = datetime.now()
-        request_id = f"{timestamp.strftime('%Y%m%d%H%M%S')}{user_id}"
-
-        # 进入缓存processing_cache，表示该请求正在处理
-        self.processing_cache = {"prompt": prompt, "user_id": user_id, "timestamp": timestamp, "request_id": request_id}
-
-        embedding = []
-        status = ""
-        for key, value in kwargs.items():
-            if key == "embedding":
-                embedding = value
-            elif key == "status":
-                status = value
-        # construct query
-        query = self._construct_query(
-            prompt=prompt,
-            embedding=embedding,
-            status=status,
-            tools=tools,
-            request_id=request_id,
-            abort_id=abort_id
-        )
-        # self.record_dialog_in_file(role="user", content=prompt)
-        try:
-            resp_json = await self._post(url=self.url, query=query)
-        except Exception:
-            # self.history = self.history[:-1]
-            self.processing_cache = None  # 清空缓存，避免重复生成历史数据
-            return "", SLEEP_INFORMATION, "", "", ""
-        try:
-            finish_reason = resp_json['choices'][0]['finish_reason']
-            print(f">>>>>FINISH_REASON = {finish_reason}<<<<<<")
-            predictions = resp_json['choices'][0]['message']['content'].strip()
-            thought = resp_json['choices'][0]['thought'].strip()
-            # 如果过度思考就不给思考过程了
-            if finish_reason == "overthink":
-                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
-                return "", OVERTHINK_INFORMATION, "", finish_reason, ""
-            if finish_reason == "abort":
-                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
-                return "", "[SILENCE]", "", finish_reason, ""
-            if finish_reason == "function_call":
-                action = resp_json['choices'][0]['message']['function_call']
-                action_name = action['name']
-                action_input = action['arguments']
-                print(f"{action_input}, {type(action_input)}")
-                try:
-                    feedback = await skill_call(action_name, json.loads(action_input))
-                except json.decoder.JSONDecodeError:
-                    feedback = "（不合法的输入参数）"
-                if predictions != "":
-                    if thought != "":
-                        # 格式化数据集
-                        self.conversations.append(create_conversation({"role": "assistant",
-                                                                       "content": f"Thought: {thought}\nAnswer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
-                        # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                        tool_call = format_action_to_history(action_name, action_input)
-                        self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
-
-                    else:
-                        # 格式化数据集
-                        self.conversations.append(create_conversation({"role": "assistant",
-                                                                       "content": f"Answer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
-                        # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                        tool_call = format_action_to_history(action_name, action_input)
-                        self.history = self.history + [build_message("assistant", f"<think>\n\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
-                else:
-                    # 格式化数据集
-                    self.conversations.append(create_conversation({"role": "assistant",
-                                                                   "content": f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"}))
-                    # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                    tool_call = format_action_to_history(action_name, action_input)
-                    self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
-                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
-                print(f"历史长度：{len(self.history)}")
-                return thought, predictions, feedback, finish_reason, action_name
-            else:
-                self.embedding_buffer = resp_json['choices'][0]['embedding_list']
-                print(f"查到的设定信息编号为：{self.embedding_buffer}")
-                self.conversations.append(create_conversation(
-                    {"role": "assistant", "content": f"Thought: {thought}\nFinal Answer: {predictions}"}))
-                # 检查是否需要静默回复（如果完全静默则不加入历史）
-                if "[SILENCE]" in predictions:
-                    # 移除 [SILENCE] 标记，保留前面的内容（如果有）
-                    clean_predictions = predictions.replace("[SILENCE]", "").strip()
-                    if remove_emotion(clean_predictions):
-                        self.history += [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{clean_predictions}")]
-                else:
-                    self.history += [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
-                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
-                return thought, predictions, "", finish_reason, ""
-        except Exception:
-            return "", SLEEP_INFORMATION, "", "", ""
-
-    async def send_feedback(self, feedback: str, user_id: str, tools, stop: Optional[List[str]] = None, **kwargs) -> tuple:
-        # 生成请求ID
-        timestamp = datetime.now()
-        request_id = f"{timestamp.strftime('%Y%m%d%H%M%S')}{user_id}"
-
-        # 进入缓存processing_cache，表示该请求正在处理
-        self.processing_cache = {"prompt": feedback, "user_id": user_id, "timestamp": timestamp, "request_id": request_id}
-
-        observation = self._construct_observation(prompt=feedback, tools=tools, request_id=request_id)
-        try:
-            resp_json = await self._post(url=self.url, query=observation)
-            finish_reason = resp_json['choices'][0]['finish_reason']
-            if finish_reason == "abort":
-                self.processing_cache = None
-                return "", "[SILENCE]", "", finish_reason, ""
-            # 如果过度思考就不给思考过程了
-            if finish_reason == "overthink":
-                self.processing_cache = None  # 清空缓存，避免重复生成历史数据
-                return "", OVERTHINK_INFORMATION, "", finish_reason, ""
-            if finish_reason == "function_call":
-                predictions = resp_json['choices'][0]['message']['content'].strip()
-                thought = resp_json['choices'][0]['thought'].strip()
-                action = resp_json['choices'][0]['message']['function_call']
-                action_name = action['name']
-                action_input = action['arguments']
-                print(f"Action Input: {action_input}")
-                feedback = await skill_call(action_name, json.loads(action_input))
-                if predictions != "":
-                    # 格式化数据集
-                    self.conversations.append(create_conversation(
-                        {"role": "assistant",
-                         "content": f"Thought: {thought}\nAnswer: {predictions}\nAction: {action_name}\nAction Input: {action_input}"}))
-                    # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                    tool_call = format_action_to_history(action_name, action_input)
-                    self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
-                else:
-                    # 格式化数据集
-                    self.conversations.append(create_conversation(
-                        {"role": "assistant",
-                         "content": f"Thought: {thought}\nAction: {action_name}\nAction Input: {action_input}"}))
-                    # tool_call = "{" + f"\"name\": \"{action_name}\", \"arguments\": {action_input}" + "}"
-                    tool_call = format_action_to_history(action_name, action_input)
-                    self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n<tool_call>\n{tool_call}\n</tool_call>\n")]
-
-                print(f"历史长度：{len(self.history)}")
-                return thought, predictions, feedback, finish_reason, action_name
-            else:
-                predictions = resp_json['choices'][0]['message']['content'].strip()
-                thought = resp_json['choices'][0]['thought'].strip()
-                # 格式化数据集
-                self.conversations.append(create_conversation(
-                    {"role": "assistant", "content": f"Thought: {thought}\nFinal Answer: {predictions}"}))
-
-                self.history = self.history + [build_message("assistant", f"<think>\n{thought}\n</think>\n\n{predictions}")]
-
-                return thought, predictions, "", finish_reason, ""
-        except Exception:
-            return "", SLEEP_INFORMATION, "", "", ""
+    def clear_memory(self):
+        self.record_dialog_in_file(get_json(self.conversations, ""))
+        self.history = []
+        self.conversations = []
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:
-        """Get the identifying parameters.
-        """
-        _param_dict = {
-            "url": self.url
-        }
-        return _param_dict
+        return {"url": self.url}
 
 
 if __name__ == "__main__":

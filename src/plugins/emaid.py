@@ -35,8 +35,9 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 在遭遇到数学计算或是逻辑相关的问题时，你可以通过在沙盒中运行代码解决问题。\n" \
                f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。首先使用**start_code_session**启动一个会话，获取session_id，然后通过**read_code_output**获取程序的第一轮输出。此后可以重复调用**send_code_input**以传入用户输入，获取结果。在程序结束之后，记得要使用**close_code_session**关闭已经不需要的会话。\n" \
                f"7. **战斗模拟器**：\n" \
-               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行**python main.py**命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。在游玩过程中，你可以通过**send_code_input**持续交互。" \
-               f"   - 你可以通过**git_command**工具管理你的代码，进行版本控制。" \
+               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下，main.py是主程序入口。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行**python main.py**命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。在游玩过程中，你可以通过**send_code_input**持续交互。" \
+               f"   - 你维护的文档：需求文档Battle_Simulator_Documentation.md，运行和玩法手册README.py，以及你的版本更新文档CHANGELOG.md" \
+               f"   - 你可以通过**git_command**工具管理你的代码，进行版本控制。每次提交之前记得用diff查看一下修改情况，避免删改已有的功能和逻辑" \
                f"   - 在游戏结束时记得关闭会话。"
 
 LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请不要误以为是对你说话。请根据上下文自主作出判断是否作出回复，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。尤其当好感度低于1时，请不要过分活跃。"
@@ -69,11 +70,11 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
             temperature=1.0,
-            top_p=0.6,
+            top_p=0.7,
             top_k=20,
             max_history=50,
             repetition_penalty=1.05,
-            # presence_penalty=1.05,
+            presence_penalty=1.08,
             enable_thinking=True
         )
         llm_list[group_id] = llm
@@ -169,6 +170,26 @@ async def send_chat(prompt: str, group_id: str, user_id: str, embedding, status:
     return thought, response, feedback, finish_reason, function
 
 
+async def send_feedback(feedback: str, user_id: str, group_id: str, embedding, status: str, tools) -> tuple:
+    """
+    通过接口向LLM发送API返回结果
+    :param group_id: 群组ID
+    :param feedback: 函数调用反馈信息
+    :param prompt:用户发送的聊天内容
+    :return:LLM返回的聊天内容
+    """
+    llm = getLLM(group_id)
+    thought, response, feedback, finish_reason, function = await llm.send_feedback(
+        feedback,
+        user_id=user_id,
+        embedding=CORE_COMMAND + "\n\n" + embedding,
+        status=status,
+        tools=tools,
+        stop=None
+    )
+    return thought, response, feedback, finish_reason, function
+
+
 async def summarize_history(group_id: str):
     llm = getLLM(group_id)
     await llm.shorten_history()
@@ -209,19 +230,6 @@ async def get_summary(group_id: str) -> str:
     llm = getLLM(group_id)
     summary = await llm.conclude_summary()
     return summary
-
-
-async def send_feedback(feedback: str, user_id: str, group_id: str, tools) -> tuple:
-    """
-    通过接口向LLM发送API返回结果
-    :param group_id: 群组ID
-    :param feedback: 函数调用反馈信息
-    :param prompt:用户发送的聊天内容
-    :return:LLM返回的聊天内容
-    """
-    llm = getLLM(group_id)
-    thought, response, feedback, finish_reason, function = await llm.send_feedback(feedback, user_id=user_id, tools=tools, stop=None)
-    return thought, response, feedback, finish_reason, function
 
 
 def set_talker_name(user_id: str, username: str):
@@ -628,8 +636,7 @@ async def chat(event: Event):
         status=status,
         tools=tools,
         prompt=pre_messages + tips,
-        _poke=_poke,
-        username=username
+        _poke=_poke
     )
 
     # 总结历史，缩短上下文
@@ -639,7 +646,7 @@ async def chat(event: Event):
         THREAD_LOCKER = True
 
 
-async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, status, tools, prompt, _poke, username):
+async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, status, tools, prompt, _poke):
     """
     处理与 LLM 的交互，包括首次调用和后续的 function_call 循环。
     内部直接使用 group_chatter 发送消息。
@@ -803,8 +810,9 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                 observation = feedback
 
         # 调用反馈
+        status = build_status()
         thought, response, feedback, finish_reason, function = await send_feedback(
-            observation, user_id, group_id, tools
+            observation, user_id, group_id, user_info, status, tools
         )
         print(f"Thought: {thought}")
 
@@ -835,8 +843,8 @@ def convert_cq_to_message(content: str) -> Tuple[Union[str, Message, MessageSegm
     text_result = content
     for match in reversed(matches):
         qq = match.group(1)
-        username = get_talker_name(qq)   # 调用你的函数获取用户名
-        replacement = f"@{username} "    # 用户名后加一个空格
+        username = get_talker_name(qq)  # 调用你的函数获取用户名
+        replacement = f"@{username} "  # 用户名后加一个空格
         text_result = text_result[:match.start()] + replacement + text_result[match.end():]
 
     # 构造消息对象（原逻辑）
@@ -869,9 +877,9 @@ async def send_system_forward(group_id: str, messages: List[Union[Message, Messa
 
 
 def split_message_into_chunks(
-    msg_obj: Union[Message, str, List[MessageSegment]],
-    emoji_file: Optional[str] = None,
-    max_len: int = 300
+        msg_obj: Union[Message, str, List[MessageSegment]],
+        emoji_file: Optional[str] = None,
+        max_len: int = 300
 ) -> List[List[MessageSegment]]:
     """
     将消息分割成多个块，每个块是一个 MessageSegment 列表。
@@ -925,7 +933,7 @@ def split_message_into_chunks(
             # 极端情况：当前 chunk 为空且单块文本超长
             if not current_chunk and len(text_block) > max_len:
                 for i in range(0, len(text_block), max_len):
-                    chunks.append([("text", text_block[i:i+max_len])])
+                    chunks.append([("text", text_block[i:i + max_len])])
                 continue
 
             if current_len + len(text_block) <= max_len:
@@ -979,10 +987,10 @@ def split_message_into_chunks(
 
 
 async def send_forward_with_split(
-    group_id: str,
-    msg_obj: Union[Message, str, List[MessageSegment]],
-    emoji_file: Optional[str] = None,
-    max_len: int = 3000,
+        group_id: str,
+        msg_obj: Union[Message, str, List[MessageSegment]],
+        emoji_file: Optional[str] = None,
+        max_len: int = 3000,
 ) -> None:
     """
     发送消息，自动处理超长分段（使用合并转发）。
@@ -996,7 +1004,7 @@ async def send_forward_with_split(
     contents = []
     for segments in chunks_segments:
         node = MessageSegment.node_custom(
-            user_id=bot_id,          # 请确保 bot_id 在作用域内可用
+            user_id=bot_id,  # 请确保 bot_id 在作用域内可用
             nickname="[SYSTEM]",
             content=Message(segments)
         )
@@ -1006,10 +1014,10 @@ async def send_forward_with_split(
 
 
 async def send_message_with_split(
-    sender,  # 具有 async send(message) 方法的对象，如 group_chatter
-    msg_obj: Union[Message, str, List[MessageSegment]],
-    emoji_file: Optional[str] = None,
-    max_len: int = 3000
+        sender,  # 具有 async send(message) 方法的对象，如 group_chatter
+        msg_obj: Union[Message, str, List[MessageSegment]],
+        emoji_file: Optional[str] = None,
+        max_len: int = 3000
 ) -> None:
     """
     发送消息，自动处理超长分段（直接逐条发送）。
