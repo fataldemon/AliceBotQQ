@@ -219,51 +219,33 @@ func_read_code_file = {
         "required": ["filename"]
     }
 }
-func_start_code_session = {
-    "name": "start_code_session",
-    "description": "启动一个交互式代码会话，运行指定的代码（支持 input() 交互）。返回会话ID。",
+func_start_interactive_code = {
+    "name": "start_interactive_code",
+    "description": "启动一个交互式代码会话（Python或Bash），会关闭之前的会话。返回会话ID和初始输出。",
     "parameters": {
         "type": "object",
         "properties": {
             "language": {"type": "string", "enum": ["python", "bash"]},
-            "code": {"type": "string", "description": "要运行的完整代码字符串"}
+            "code": {"type": "string", "description": "要运行的完整代码"}
         },
         "required": ["language", "code"]
     }
 }
-func_read_code_output = {
-    "name": "read_code_output",
-    "description": "读取会话中程序当前的输出。如果 wait=true，则等待直到有输出（适合等待游戏提示）。",
+func_send_interactive_input = {
+    "name": "send_interactive_input",
+    "description": "向当前活动会话发送一行用户输入，并返回程序的新输出。无需提供会话ID。",
     "parameters": {
         "type": "object",
         "properties": {
-            "session_id": {"type": "string"},
-            "wait": {"type": "boolean"},
-            "timeout": {"type": "integer"}
+            "user_input": {"type": "string", "description": "用户输入的内容"}
         },
-        "required": ["session_id"]
-    }
-}
-func_send_code_input = {
-    "name": "send_code_input",
-    "description": "向会话中的程序发送一行用户输入（例如游戏中的答案），并返回程序的新输出。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "session_id": {"type": "string"},
-            "user_input": {"type": "string"}
-        },
-        "required": ["session_id", "user_input"]
+        "required": ["user_input"]
     }
 }
 func_close_code_session = {
-    "name": "close_code_session",
-    "description": "结束代码会话，释放容器资源。",
-    "parameters": {
-        "type": "object",
-        "properties": {"session_id": {"type": "string"}},
-        "required": ["session_id"]
-    }
+    "name": "close_current_session",
+    "description": "关闭当前活动会话，释放容器资源。",
+    "parameters": {"type": "object", "properties": {}, "required": []}
 }
 func_git_command = {
     "name": "git_command",

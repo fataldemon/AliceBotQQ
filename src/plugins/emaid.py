@@ -33,9 +33,9 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 你拥有一个工作空间，工作空间下保存着你编写的所有代码。你可以在工作空间下进行开发工作。你可以使用**list_code_files**工具能力查看工作空间下的文件列表，里面包括了你编写的代码和其他文件。你可以使用**read_code_file**读取并查看文件内容。随后你可以调用**run_code_in_sandbox**将自己的代码在隔离的沙盒下测试运行。测试完毕后，你可以使用**write_file**将其保存在工作空间。在写入已有文件之前一定要先查看现有文件的内容，以免直接覆盖。\n" \
                f"   - 你也可以用**write_file**在工作空间保存需求和使用手册等文件。\n" \
                f"   - 在遭遇到数学计算或是逻辑相关的问题时，你可以通过在沙盒中运行代码解决问题。\n" \
-               f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。首先使用**start_code_session**启动一个会话，获取session_id，然后通过**read_code_output**获取程序的第一轮输出。此后可以重复调用**send_code_input**以传入用户输入，获取结果。在程序结束之后，记得要使用**close_code_session**关闭已经不需要的会话。\n" \
+               f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。" \
                f"7. **战斗模拟器**：\n" \
-               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下，main.py是主程序入口。想要启动战斗模拟器，你需要用**start_code_session**先启动交互式沙盒，在bash下运行**python main.py**命令，随后立刻通过**read_code_output**获取程序的第一轮输出，便可以愉快地游玩了。在游玩过程中，你可以通过**send_code_input**持续交互。" \
+               f"   - 爱丽丝编写的战斗模拟器保存在工作空间下，main.py是主程序入口。想要启动战斗模拟器，你需要用**start_interactive_code**在bash下运行**python main.py**命令。在游戏中，你应该遵循游戏的指引，通过**send_interactive_input**输入游戏命令，持续进行互动。" \
                f"   - 你维护的文档：需求文档Battle_Simulator_Documentation.md，运行和玩法手册README.py，以及你的版本更新文档CHANGELOG.md" \
                f"   - 你可以通过**git_command**工具管理你的代码，进行版本控制。每次提交之前记得用diff查看一下修改情况，避免删改已有的功能和逻辑" \
                f"   - 在游戏结束时记得关闭会话。"
@@ -70,11 +70,11 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
             temperature=1.0,
-            top_p=0.7,
+            top_p=0.6,
             top_k=20,
             max_history=50,
             repetition_penalty=1.05,
-            presence_penalty=1.08,
+            presence_penalty=1.05,
             enable_thinking=True
         )
         llm_list[group_id] = llm
@@ -668,7 +668,7 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
     steps = 0
     loop = 0
     max_loop = 6
-    while finish_reason == "function_call" and loop < max_loop:
+    while finish_reason == "function_call" and loop <= max_loop:
         loop += 1
         observation = ""
         if feedback != "":
@@ -810,11 +810,12 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
                 observation = feedback
 
         # 调用反馈
-        status = build_status()
-        thought, response, feedback, finish_reason, function = await send_feedback(
-            observation, user_id, group_id, user_info, status, tools
-        )
-        print(f"Thought: {thought}")
+        if loop < max_loop:
+            status = build_status()
+            thought, response, feedback, finish_reason, function = await send_feedback(
+                observation, user_id, group_id, user_info, status, tools
+            )
+            print(f"Thought: {thought}")
 
         # 发送响应
         await _send_response(group_chatter, user_id, response)

@@ -203,62 +203,61 @@ async def read_code_file_service(filename: str) -> str:
         return f"（读取文件失败）\n{result['message']}"
 
 
-async def start_code_session(language: str, code: str) -> str:
+# 单例：当前活动的会话
+_current_session = None
+_current_session_id = None
+
+
+async def start_interactive_code(language: str, code: str) -> str:
     """
-    启动一个交互式代码会话（如命令行游戏），返回会话ID。
+    启动一个交互式代码会话（会关闭之前的会话），并返回初始输出。
     """
+    global _current_session, _current_session_id
     loop = asyncio.get_running_loop()
+
+    # 关闭已有会话
+    if _current_session:
+        try:
+            await loop.run_in_executor(None, _current_session.close)
+        except:
+            pass
+        _current_session = None
+        _current_session_id = None
+
     try:
-        # 生成唯一会话ID
         session_id = f"code_{int(asyncio.get_event_loop().time())}_{hash(code) % 10000}"
         sandbox = InteractiveCodeSandbox(language=language, code=code)
-        # 启动沙盒（同步方法在线程池执行）
         await loop.run_in_executor(None, sandbox.start)
-        _sessions[session_id] = sandbox
-        return f"（成功启动交互式代码会话）\n会话ID：{session_id}\n语言：{language.upper()}"
+        _current_session = sandbox
+        _current_session_id = session_id
+
+        # 等待并获取初始输出
+        output = await loop.run_in_executor(None, sandbox.wait_for_output, 10)
+        if output:
+            return f"（成功启动交互式代码会话，会话ID: {session_id}）\n<初始输出>：\n{output}"
+        else:
+            return f"（成功启动交互式代码会话，会话ID: {session_id}）\n（程序暂无输出，可能等待输入）"
     except Exception as e:
+        _current_session = None
+        _current_session_id = None
         return f"（启动交互式代码会话失败）\n错误信息：{str(e)}"
 
 
-async def read_code_output(session_id: str, wait: bool = False, timeout: int = 30) -> str:
+async def send_interactive_input(user_input: str) -> str:
     """
-    读取会话中程序当前的输出。若 wait=True 则阻塞直到有新输出或超时。
+    向当前活动会话发送输入，并返回程序的新输出。
+    如果没有活动会话，返回错误提示。
     """
+    global _current_session
     loop = asyncio.get_running_loop()
-    sandbox = _sessions.get(session_id)
-    if not sandbox:
-        return f"（读取输出失败）\n会话 {session_id} 不存在或已结束"
+
+    if not _current_session:
+        return "（发送输入失败）\n当前没有运行中的会话，请先调用 start_interactive_code 启动会话。"
 
     try:
-        if wait:
-            output = await loop.run_in_executor(None, sandbox.wait_for_output, timeout)
-        else:
-            output = await loop.run_in_executor(None, sandbox.read_output)
-
-        if output:
-            return f"（成功读取输出）\n<输出内容>：\n{output}"
-        else:
-            return f"（成功读取输出，但当前无输出）\n（程序可能还在等待输入或已结束）"
-    except Exception as e:
-        return f"（读取输出失败）\n错误信息：{str(e)}"
-
-
-async def send_code_input(session_id: str, user_input: str) -> str:
-    """
-    向会话中的程序发送一行用户输入，并返回程序的新输出。
-    """
-    loop = asyncio.get_running_loop()
-    sandbox = _sessions.get(session_id)
-    if not sandbox:
-        return f"（发送输入失败）\n会话 {session_id} 不存在或已结束"
-
-    try:
-        # 发送输入
-        await loop.run_in_executor(None, sandbox.send_input, user_input)
-        # 等待一小段时间让程序处理并产生输出
-        await asyncio.sleep(0.3)
-        # 读取新输出
-        output = await loop.run_in_executor(None, sandbox.read_output)
+        await loop.run_in_executor(None, _current_session.send_input, user_input)
+        await asyncio.sleep(0.3)  # 等待程序处理
+        output = await loop.run_in_executor(None, _current_session.read_output)
         if output:
             return f"（成功发送输入）\n输入内容：{user_input}\n<程序输出>：\n{output}"
         else:
@@ -267,18 +266,18 @@ async def send_code_input(session_id: str, user_input: str) -> str:
         return f"（发送输入失败）\n错误信息：{str(e)}"
 
 
-async def close_code_session(session_id: str) -> str:
-    """
-    结束代码会话，释放容器资源。
-    """
-    loop = asyncio.get_running_loop()
-    sandbox = _sessions.pop(session_id, None)
-    if not sandbox:
-        return f"（关闭会话失败）\n会话 {session_id} 不存在或已结束"
+async def close_current_session() -> str:
+    """关闭当前活动会话并释放资源"""
+    global _current_session, _current_session_id
+    if not _current_session:
+        return "（关闭会话）\n当前没有活动会话。"
 
+    loop = asyncio.get_running_loop()
     try:
-        await loop.run_in_executor(None, sandbox.close)
-        return f"（成功关闭会话）\n会话ID：{session_id}\n资源已清理"
+        await loop.run_in_executor(None, _current_session.close)
+        _current_session = None
+        _current_session_id = None
+        return "（已关闭当前交互式会话，资源已清理）"
     except Exception as e:
         return f"（关闭会话时出错）\n错误信息：{str(e)}"
 

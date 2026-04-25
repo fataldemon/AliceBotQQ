@@ -29,9 +29,8 @@ def get_general_tools():
         func.func_write_file,
         func.func_list_code_files,
         func.func_read_code_file,
-        func.func_start_code_session,
-        func.func_read_code_output,
-        func.func_send_code_input,
+        func.func_start_interactive_code,
+        func.func_send_interactive_input,
         func.func_close_code_session,
         func.func_git_command
     ]
@@ -42,10 +41,9 @@ def get_general_tools():
                         "[write_file]," \
                         "[read_code_file]," \
                         "[list_code_files]" \
-                        "[start_code_session]," \
-                        "[read_code_output]," \
-                        "[send_code_input]," \
-                        "[close_code_session]" \
+                        "[start_interactive_code]," \
+                        "[send_interactive_input]," \
+                        "[close_current_session]" \
                         "[git_command]"
     set_available_functions(available_actions)
     if check_railway():
@@ -123,10 +121,9 @@ skill_handlers: Dict[str, Callable] = {
     "write_file": make_handler("write_file_service", [("filename", "文件名不能为空！"), ("content", "文件内容不能为空！")]),
     "list_code_files": make_handler("list_code_files_service", []),   # 无必需参数
     "read_code_file": make_handler("read_code_file_service", [("filename", "文件名不能为空！")]),
-    "start_code_session": make_handler("start_code_session", [("language", "语言不能为空"), ("code", "代码不能为空")]),
-    "read_code_output": make_handler("read_code_output", [("session_id", "会话ID不能为空")]),
-    "send_code_input": make_handler("send_code_input", [("session_id", "会话ID不能为空"), ("user_input", "输入不能为空")]),
-    "close_code_session": make_handler("close_code_session", [("session_id", "会话ID不能为空")]),
+    "start_interactive_code": make_handler("start_interactive_code", [("language", "语言不能为空"), ("code", "代码不能为空")]),
+    "send_interactive_input": make_handler("send_interactive_input", [("user_input", "输入不能为空")]),
+    "close_current_session": make_handler("close_current_session", []),
     "git_command": make_handler("git_command_service", [("git_command", "git 命令不能为空！")]),
 }
 
