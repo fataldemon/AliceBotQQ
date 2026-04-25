@@ -36,7 +36,7 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 交互式沙盒：在测试需要用户交互的程序时，可以使用交互式沙盒。" \
                f"7. **战斗模拟器**：\n" \
                f"   - 爱丽丝编写的战斗模拟器保存在工作空间下，main.py是主程序入口。想要启动战斗模拟器，你需要用**start_interactive_code**在bash下运行**python main.py**命令。在游戏中，你应该遵循游戏的指引，通过**send_interactive_input**输入游戏命令，持续进行互动。" \
-               f"   - 你维护的文档：需求文档Battle_Simulator_Documentation.md，运行和玩法手册README.py，以及你的版本更新文档CHANGELOG.md" \
+               f"   - 你需要维护的文档：需求文档Battle_Simulator_Documentation.md，运行和玩法手册README.py，以及你的版本更新日志CHANGELOG.md" \
                f"   - 你可以通过**git_command**工具管理你的代码，进行版本控制。每次提交之前记得用diff查看一下修改情况，避免删改已有的功能和逻辑" \
                f"   - 在游戏结束时记得关闭会话。"
 
