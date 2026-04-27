@@ -266,4 +266,33 @@ func_git_command = {
         "required": ["git_command"]
     }
 }
+func_recall_memory = {
+    "type": "function",
+    "function": {
+        "name": "recall_memory",
+        "description": "从聊天历史中召回相关记忆，支持时间范围和关键词，并返回命中消息的前后上下文（保持对话连贯）。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "time_range": {
+                    "type": "string",
+                    "description": "时间范围，支持自然语言（如：'最近2小时'、'昨天'、'今天'、'本周'）或具体时间（如：'2024-01-01'、'2024-01-01 to 2024-01-31'）。最大跨度90天。最大返回条数30（包含上下文）"
+                },
+                "keywords": {
+                    "type": "string",
+                    "description": "搜索关键词，多个词用空格分隔（AND关系）。例如：Python 学习。"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最多返回多少条命中消息（锚点），默认5，最大10。"
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": "每条命中消息前后各取多少条上下文消息，默认1，最大5。"
+                }
+            },
+            "required": []
+        }
+    }
+}
 

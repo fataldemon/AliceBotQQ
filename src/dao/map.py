@@ -1,10 +1,6 @@
 from sqlalchemy import Column, Integer, String, and_
-from sqlalchemy.orm import declarative_base, sessionmaker
-from src.dao.dbengine import engine
-
-
-# 创建一个基类，用于声明类定义
-Base = declarative_base()
+from sqlalchemy.orm import sessionmaker
+from src.dao.dbengine import engine, Base
 
 
 # 世界观

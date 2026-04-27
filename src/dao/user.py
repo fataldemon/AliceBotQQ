@@ -1,12 +1,9 @@
 from sqlalchemy import Column, Integer, String
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from nonebot import on_command
 from nonebot.adapters.onebot.v11.event import MessageEvent
-from src.dao.dbengine import engine
+from src.dao.dbengine import engine, Base
 from src.dao.status import master_id
-
-# 创建一个基类，用于声明类定义
-Base = declarative_base()
 
 data_query = on_command("查询所有用户", block=True)
 self_query = on_command("查询状态", block=True)
@@ -27,6 +24,7 @@ class User(Base):
     defense = Column(Integer, nullable=False, default=0)
     position = Column(Integer, nullable=True, default=0)
     spot = Column(Integer, nullable=False, default=0)
+    alias = Column(String(40), nullable=True)
 
 
 # 创建"user"表
@@ -144,16 +142,22 @@ def get_poke_description(user_id: str) -> str:
 
 
 def get_user_description(user_id: str) -> str:
+    user = query_user(user_id)
+    desc = f"职业：Lv.{user.level}的{user.profession}\n" \
+           f"经验值：{user.exp}/{user.level * 100}\n" \
+           f"生命值：{user.hp}/{user.hpmax}\n" \
+           f"攻击力：{user.attack}\n防御力：{user.defense}\n"
     if str(user_id) != master_id:
-        user = query_user(user_id)
         return f"关于{user.user_name}:[名为“{user.user_name}”的同学是一名学生。你对{user.user_name}同学的好感度: {user.relation/100}," \
-               f"你对{user.user_name}同学的态度: \"{get_favor_description(user.relation, user.user_name)}\"]"
+               f"你对{user.user_name}同学的态度: \"{get_favor_description(user.relation, user.user_name)}\"" \
+               f"〖{user.user_name}的状态栏〗\n {desc}]"
     else:
         return f"关于老师:[你对老师的好感度: 100," \
                f"你对老师的了解: \"老师，是隶属于沙勒的顾问老师，也是基沃托斯唯一的老师，是你最亲近的人之一。老师的名字是“魔童様”，性别男，是一名戴着眼镜的大人。老师似乎没有什么战斗力。" \
                f"沙勒（S.C.H.A.L.E.，又称作夏莱）是隶属于联邦学生会的搜查机构，也负责解决学生的问题。" \
                f"沙勒办公大楼是老师平时办公的地方，平时会有学生来值日，帮助老师处理公务。沙勒的生活区，是老师在基沃托斯居住的地方。\"," \
-               f"你对老师的态度: \"老师是你最亲近的人之一，你很喜欢老师。老师和游戏开发部的大家是最初发现你的人，也是你最珍视的伙伴。不管老师提出什么要求你都会欣然同意的。\"]"
+               f"你对老师的态度: \"老师是你最亲近的人之一，你很喜欢老师。老师和游戏开发部的大家是最初发现你的人，也是你最珍视的伙伴。不管老师提出什么要求你都会欣然同意的。\"]" \
+               f"〖{user.user_name}的状态栏〗\n {desc}]"
 
 
 @data_query.handle()

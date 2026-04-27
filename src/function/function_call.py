@@ -32,7 +32,8 @@ def get_general_tools():
         func.func_start_interactive_code,
         func.func_send_interactive_input,
         func.func_close_code_session,
-        func.func_git_command
+        func.func_git_command,
+        func.func_recall_memory
     ]
     available_actions = "[sword_of_light]," \
                         "[search_on_internet]," \
@@ -44,7 +45,8 @@ def get_general_tools():
                         "[start_interactive_code]," \
                         "[send_interactive_input]," \
                         "[close_current_session]" \
-                        "[git_command]"
+                        "[git_command]" \
+                        "[recall_memory]"
     set_available_functions(available_actions)
     if check_railway():
         functions.append(format_railway(func.func_railway))
@@ -125,6 +127,7 @@ skill_handlers: Dict[str, Callable] = {
     "send_interactive_input": make_handler("send_interactive_input", [("user_input", "输入不能为空")]),
     "close_current_session": make_handler("close_current_session", []),
     "git_command": make_handler("git_command_service", [("git_command", "git 命令不能为空！")]),
+    "recall_memory": make_handler("recall_memory", []),
 }
 
 

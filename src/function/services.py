@@ -9,6 +9,7 @@ from src.skills.game_development import read_code_file, write_file, list_code_fi
 from src.skills.interactive_sandbox import InteractiveCodeSandbox, _sessions
 from src.skills.online_search import online_search_func, access_page_func
 from src.skills.git_service import git_command_service
+from src.dao.chat_history import recall_memory
 
 
 def hikari_yo(target: str) -> str:

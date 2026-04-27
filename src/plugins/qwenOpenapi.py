@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os.path
@@ -11,6 +12,7 @@ import requests
 from langchain.llms.base import LLM
 from pydantic import Field
 
+from src.dao.chat_history import save_chat_record, load_recent_history
 from src.function.function_call import skill_call
 from src.plugins.dataset_collection import create_first_conversation, create_conversation, get_json
 from src.plugins.emotion import remove_emotion
@@ -90,7 +92,6 @@ class Qwen(LLM):
     max_history: int = 20
     max_code: int = 3
     max_document: int = 3
-    group_name: str = ""
 
     # 运行时状态（可变对象，默认值需在 __init__ 中重新初始化）
     embedding_buffer: List = []      # 注意：Pydantic 会共享默认值，需在 __init__ 中重置
@@ -102,6 +103,8 @@ class Qwen(LLM):
     code_zone: List = []
     document_zone: List = []
     last_reply: datetime = Field(default_factory=datetime.now)
+    group_id: str = ""
+    cut_point: int = 20
 
     # 部署地址
     url: str = "http://localhost:8000/v1/chat/completions"
@@ -120,6 +123,11 @@ class Qwen(LLM):
         self.code_zone = []
         self.document_zone = []
         self.last_reply = datetime.now()
+        self.cut_point = min(20, len(self.history) - 20)
+
+        # 新增：从数据库恢复历史和摘要
+        if self.group_id:
+            self.history, self.summary = load_recent_history(self.group_id, limit=self.cut_point)
 
     @property
     def _llm_type(self) -> str:
@@ -156,7 +164,7 @@ class Qwen(LLM):
             return
 
         self.record_dialog_in_file(get_json(self.conversations, ""))
-        cut_point = min(10, len(self.history) - 1)
+        cut_point = min(20, len(self.history) - 20)
         # 确保截断点之前的消息是 user 角色
         while cut_point > 0 and self.history[-cut_point]["role"] != "user":
             cut_point -= 1
@@ -177,11 +185,20 @@ class Qwen(LLM):
         dialog_history = [msg["content"] for msg in self.history[:-cut_point] if "content" in msg]
         summary_prompt = (
             f"前情提要：{prev_summary}\n\n对话历史：{dialog_history}\n\n"
-            "综合上面的前情提要和对话历史中的剧情，为爱丽丝汇总成300字以内的记忆片段，"
-            "并提取出需要长期记忆的重要细节信息。记忆片段要求用讲述故事的语气，长度适中，"
-            "需要保留对话历史中的人物和关键信息，并且反映最近的对话内容，思考过程尽量简略："
+            "综合上面的前情提要和对话历史中的剧情，为爱丽丝汇总成400字以内的记忆摘要，"
+            "记忆摘要要求用讲述故事的语气，长度适中，"
+            "需要忠实地反映出最近的对话内容，思考过程尽量简略。另外，需要用markdown的格式记录下对话历史中需要长期记忆的人物和关键细节信息。"
+            "下面是记忆摘要："
         )
-        self.summary = await self.call_assistant(summary_prompt)
+        raw_summary = await self.call_assistant(summary_prompt)
+        self.summary = f"**历史摘要**\n{raw_summary}\n提示：你可以通过**recall_memory**函数回忆之前的具体对话信息。"
+        asyncio.create_task(asyncio.to_thread(
+            save_chat_record,
+            group_id=self.group_id,
+            role="system",
+            content=self.summary,
+            is_summary=1
+        ))
         return self.summary
 
     # ---------- 打断与并发控制 ----------
@@ -253,6 +270,13 @@ class Qwen(LLM):
         else:
             self.conversations.append(create_conversation({"role": "user", "content": clean_prompt}))
         self.history.append(build_message("user", clean_prompt))
+        asyncio.create_task(asyncio.to_thread(
+            save_chat_record,
+            group_id=self.group_id,
+            role="user",
+            content=clean_prompt,
+            request_id=request_id
+        ))
 
         if self.processing_cache:
             self.processing_cache["prompt"] = ""
@@ -284,7 +308,7 @@ class Qwen(LLM):
         embedding = kwargs.get("embedding", [])
         status = kwargs.get("status", "")
         request_id = kwargs.get("request_id", "")
-        messages = self.history + [build_message("function", feedback)]
+        messages = self.history
         extra_info = f"{embedding}\n{status}"
         return self._build_base_query(messages, tools, extra_info, request_id)
 
@@ -314,6 +338,15 @@ class Qwen(LLM):
 
         self.conversations.append(create_conversation({"role": "assistant", "content": dataset_content}))
         self.history.append(build_message("assistant", full_content))
+        asyncio.create_task(asyncio.to_thread(
+            save_chat_record,
+            group_id=self.group_id,
+            role="assistant",
+            content=full_content,
+            thought=thought,
+            action_name=action_name,
+            action_input=action_input
+        ))
 
     def _append_final_answer_history(self, thought: str, answer: str):
         dataset_content = f"Thought: {thought}\nFinal Answer: {answer}"
@@ -323,6 +356,13 @@ class Qwen(LLM):
             return
         full_content = f"<think>\n{thought}\n</think>\n\n{clean_answer}"
         self.history.append(build_message("assistant", full_content))
+        asyncio.create_task(asyncio.to_thread(
+            save_chat_record,
+            group_id=self.group_id,
+            role="assistant",
+            content=full_content,
+            thought=thought
+        ))
 
     # ---------- 主要调用接口 ----------
     async def call_with_function(self, prompt: str, user_id: str, tools: List, **kwargs) -> tuple:
@@ -351,6 +391,17 @@ class Qwen(LLM):
         timestamp = datetime.now()
         current_request_id = f"{timestamp.strftime('%Y%m%d%H%M%S')}{user_id}"
         self.processing_cache = {"prompt": feedback, "user_id": user_id, "timestamp": timestamp, "request_id": current_request_id}
+
+        # 新增：将 function 消息加入历史并记录数据库
+        function_message = build_message("function", feedback)
+        self.history.append(function_message)
+        asyncio.create_task(asyncio.to_thread(
+            save_chat_record,
+            group_id=self.group_id,
+            role="function",
+            content=feedback,
+            request_id=current_request_id
+        ))
 
         query = self._construct_observation(feedback=feedback, tools=tools, request_id=current_request_id, **kwargs)
 

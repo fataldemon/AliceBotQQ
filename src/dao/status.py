@@ -1,8 +1,8 @@
 import os
 from dotenv import load_dotenv
 from sqlalchemy import Column, Integer, String
-from sqlalchemy.orm import declarative_base, sessionmaker
-from src.dao.dbengine import engine
+from sqlalchemy.orm import sessionmaker
+from src.dao.dbengine import engine, Base
 from nonebot import on_command
 from nonebot.adapters.onebot.v11.event import MessageEvent
 from src.dao.map import get_school, get_area, get_position, get_position_description, \
@@ -16,9 +16,6 @@ load_dotenv()
 # 管理员身份
 master_id = os.environ.get("master_id")
 bot_id = os.environ.get("bot_user_id")
-
-# 创建一个基类，用于声明类定义
-Base = declarative_base()
 
 
 class Status(Base):
@@ -140,7 +137,7 @@ def get_status_description() -> str:
     else:
         profession = query_prof(status.profession)
         if profession is None:
-            desc = f"〖爱丽丝的状态栏〗\n爱丽丝的职业：{status.level}的学生\n" \
+            desc = f"〖爱丽丝的状态栏〗\n爱丽丝的职业：Lv.{status.level}的学生\n" \
                f"经验值：{status.exp}/{status.level*100}\n" \
                f"生命值：{status.hp}/{status.hpmax}\n" \
                f"攻击力：{status.attack}\n防御力：{status.defense}\n" \

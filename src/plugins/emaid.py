@@ -3,9 +3,11 @@ import datetime
 import re
 from typing import Union, Tuple, Optional, List
 
-from nonebot import on_message, on_notice, get_bot
+from nonebot import on_message, on_notice, get_bot, get_driver
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Message, MessageSegment, Event, MessageEvent, NotifyEvent, PokeNotifyEvent
+
+from src.dao.chat_history import init_fts
 from src.plugins.chatglmOpenapi import ChatGLM
 from src.plugins.qwenOpenapi import Qwen, SLEEP_INFORMATION
 from src.plugins.emotion import remove_emotion, check_emotion
@@ -19,8 +21,8 @@ from src.function.function_call import get_general_tools, move_tool
 
 CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"1. **身份一致性**：你必须完全沉浸在上述角色设定中。严禁提及你是 AI、机器人、程序 or 语言模型。严禁以 AI 助手的语气说话。\n" \
-               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论的列表或过于正式的陈述。\n" \
-               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者。你需要根据上下文自主作出判断，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复，否则请保持沉默并回复 **[SILENCE]**。\n" \
+               f"2. **回复风格**：回复必须精简、口语化，严禁使用长篇大论或过于正式的陈述。\n" \
+               f"3. **社交距离感**：你必须分清【直接对话】与【潜水观察】。在群员之间互相聊天（未艾特你或提及你名字）时，你只是个旁观者。尤其当好感度低于1时，请避免主动搭话。你需要根据上下文自主作出判断，如果话题十分吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复，否则请保持沉默并回复 **[SILENCE]**。\n" \
                f"4. **互动决策**：\n" \
                f"   - **决定是否回复**：仔细判断对话是否已经自然结束，或者对方只是发送了无意义的感慨/语气词。如果你认为**没有必要回复**，请直接输出 **[SILENCE]**。在回复时你可以发送 **[CQ:at,qq=<对方的id号码>]** 来@对方。\n" \
                f"   - **主动知识获取**：若对方谈及了知识库中并未涵盖的词汇、你不知道的网络梗，或是令你疑惑的表述，可以积极主动地使用**search_on_internet**工具能力检索相关知识。你也可以通过**access_website**工具能力主动访问对话中涉及到的网页。通过**search_on_internet**查到的信息会被自动存储入知识库中。\n" \
@@ -40,7 +42,7 @@ CORE_COMMAND = f"## 核心行动准则（绝对优先）\n" \
                f"   - 你可以通过**git_command**工具管理你的代码，进行版本控制。每次提交之前记得用diff查看一下修改情况，避免删改已有的功能和逻辑" \
                f"   - 在游戏结束时记得关闭会话。"
 
-LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请不要误以为是对你说话。请根据上下文自主作出判断是否作出回复，如果话题吸引你、你被提及或者正在继续此前与你正进行着的对话，请作出回复；否则请保持沉默并回复 **[SILENCE]**。尤其当好感度低于1时，请不要过分活跃。"
+LURKING_INSTRUCT = "当前你正在【潜水观察】，这有可能只是群员之间的普通对话，请不要误以为是对你说话。请根据上下文自主作出判断是否作出回复，如果选择保持沉默，直接回复 **[SILENCE]**。"
 
 THREAD_LOCKER: bool = True  # 对话线程锁
 ACTIVE_SWITCH: bool = True  # 主动读取对话开关
@@ -60,6 +62,12 @@ anonymous_name_list = ["甲", "乙", "丙", "丁", "A", "B", "C", "D", "E", "F",
 llm_list: dict = {}
 
 
+# 启动事件
+@get_driver().on_startup
+async def startup():
+    init_fts()   # 在后台线程或直接调用（init_fts 是同步函数）
+
+
 def getLLM(group_id: str) -> ChatGLM:
     """
     按照群号获取大语言模型（为了分别存储记忆）
@@ -69,10 +77,11 @@ def getLLM(group_id: str) -> ChatGLM:
         # llm = Qwen(temperature=0.95, top_p=0.7, functions=tools, repetition_penalty=1.10, max_history=12)
         # llm = Qwen(temperature=0.93, top_p=0.7, top_k=20, max_history=30, repetition_penalty=1.05)
         llm = Qwen(
+            group_id=group_id,
             temperature=1.0,
-            top_p=0.6,
+            top_p=0.9,
             top_k=20,
-            max_history=50,
+            max_history=40,
             repetition_penalty=1.05,
             presence_penalty=1.05,
             enable_thinking=True
@@ -144,7 +153,7 @@ thread_lock = on_command("线程锁", block=True)
 black_list = on_command("blacklist ")
 unblack_list = on_command("unblacklist ")
 set_scene = on_command("goto")
-clear_death_zone = on_command("重置墓地")
+clear_death_zone = on_command("重置墓地", block=True)
 donation = on_command("给你钱", rule=_checker, priority=1, block=False)
 conclude_summary = on_command("总结历史")
 group_message = on_message(rule=_none_checker, priority=1, block=False)
@@ -217,7 +226,7 @@ async def send_to_assistant(prompt: str, group_id: str, tools=[], get_think: boo
     :return:LLM返回的聊天内容
     """
     llm = getLLM(group_id)
-    result = await llm.call_assistant(prompt, get_think=get_think, tools=tools, type=type, stop=None)
+    result = await llm.call_assistant(prompt, get_think=get_think, tools=tools, type_id=type, stop=None)
     return result
 
 
@@ -662,7 +671,7 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
         response = "[SILENCE]"
 
     # 发送首次响应
-    if response != "":
+    if response:
         await _send_response(group_chatter, user_id, response)
 
     steps = 0
@@ -672,7 +681,10 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
         loop += 1
         observation = ""
         if feedback != "":
-            if function == "search_on_internet":
+            if function == "recall_memory":
+                tools = get_general_tools()
+                observation = feedback
+            elif function == "search_on_internet":
                 if "（爱丽丝在网络上对〖" in feedback and "〗词条进行了一番搜索，得到了一些信息）" in feedback:
                     tools = get_general_tools()
                     locator_left = feedback.rfind("〖")
@@ -811,14 +823,19 @@ async def handle_llm_conversation(group_chatter, group_id, user_id, user_info, s
 
         # 调用反馈
         if loop < max_loop:
+            # 调用模型对工具结果的反馈
             status = build_status()
             thought, response, feedback, finish_reason, function = await send_feedback(
                 observation, user_id, group_id, user_info, status, tools
             )
             print(f"Thought: {thought}")
 
-        # 发送响应
-        await _send_response(group_chatter, user_id, response)
+            # 发送模型回复
+            await _send_response(group_chatter, user_id, response)
+        else:
+            # 已达最大循环次数：只显示工具结果，不调用模型，结束循环
+            print(f"达到最大工具调用次数 {max_loop}，停止继续调用模型。")
+            break
 
 
 def convert_cq_to_message(content: str) -> Tuple[Union[str, Message, MessageSegment], str]:
