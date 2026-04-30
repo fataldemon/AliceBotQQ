@@ -150,14 +150,14 @@ def get_user_description(user_id: str) -> str:
     if str(user_id) != master_id:
         return f"关于{user.user_name}:[名为“{user.user_name}”的同学是一名学生。你对{user.user_name}同学的好感度: {user.relation/100}," \
                f"你对{user.user_name}同学的态度: \"{get_favor_description(user.relation, user.user_name)}\"" \
-               f"〖{user.user_name}的状态栏〗\n {desc}]"
+               f"\n〖{user.user_name}的状态栏〗\n {desc}]"
     else:
         return f"关于老师:[你对老师的好感度: 100," \
                f"你对老师的了解: \"老师，是隶属于沙勒的顾问老师，也是基沃托斯唯一的老师，是你最亲近的人之一。老师的名字是“魔童様”，性别男，是一名戴着眼镜的大人。老师似乎没有什么战斗力。" \
                f"沙勒（S.C.H.A.L.E.，又称作夏莱）是隶属于联邦学生会的搜查机构，也负责解决学生的问题。" \
                f"沙勒办公大楼是老师平时办公的地方，平时会有学生来值日，帮助老师处理公务。沙勒的生活区，是老师在基沃托斯居住的地方。\"," \
                f"你对老师的态度: \"老师是你最亲近的人之一，你很喜欢老师。老师和游戏开发部的大家是最初发现你的人，也是你最珍视的伙伴。不管老师提出什么要求你都会欣然同意的。\"]" \
-               f"〖{user.user_name}的状态栏〗\n {desc}]"
+               f"\n〖{user.user_name}的状态栏〗\n {desc}]"
 
 
 @data_query.handle()

@@ -1,10 +1,12 @@
 import asyncio
+from contextvars import ContextVar
 from typing import List, Tuple, Callable, Dict, Union, Any
 from langchain.llms.base import LLM
 
 from src.dao.status import find_route, check_railway, get_available_functions, set_available_functions
 import src.function.functions as func
 import src.function.services as serv
+from src.skills.context_params import current_group_id
 
 
 def format_move(func_move, steps, school_id, area_id):
@@ -131,13 +133,19 @@ skill_handlers: Dict[str, Callable] = {
 }
 
 
-async def skill_call(action: str, action_input: dict) -> str:
-    available = get_available_functions()
-    if f"[{action}]" not in available:
-        return f"当前不存在可使用的技能{action}！！"
-
-    handler = skill_handlers.get(action)
-    if handler is None:
-        return f"当前不存在可使用的技能{action}！"
-
-    return await handler(action_input)
+async def skill_call(action: str, action_input: dict, group_id: str = "") -> str:
+    # 设置上下文变量
+    token = None
+    if group_id:
+        token = current_group_id.set(group_id)
+    try:
+        available = get_available_functions()
+        if f"[{action}]" not in available:
+            return f"当前不存在可使用的技能{action}！！"
+        handler = skill_handlers.get(action)
+        if handler is None:
+            return f"当前不存在可使用的技能{action}！"
+        return await handler(action_input)
+    finally:
+        if token:
+            current_group_id.reset(token)

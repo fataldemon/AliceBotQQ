@@ -1,10 +1,11 @@
-import datetime
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, func, Index, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from src.dao.dbengine import engine, Base
+from src.skills.context_params import current_group_id
 
 
 class ChatHistory(Base):
@@ -106,13 +107,17 @@ def init_fts():
 
 def save_chat_record(group_id: str, role: str, content: str = "", thought: str = "",
                      action_name: str = "", action_input: str = "",
-                     function_output: str = "", request_id: str = "", is_summary: int = 0):
+                     function_output: str = "", request_id: str = "",
+                     timestamp: datetime = None, is_summary: int = 0):
     session = Session()
     try:
+        if timestamp is None:
+            timestamp = datetime.now()  # 本地时间
         record = ChatHistory(
             group_id=group_id, role=role, content=content, thought=thought,
             action_name=action_name, action_input=action_input,
-            function_output=function_output, request_id=request_id, is_summary=is_summary
+            function_output=function_output, request_id=request_id,
+            timestamp = timestamp, is_summary=is_summary
         )
         session.add(record)
         session.commit()
@@ -138,12 +143,19 @@ def load_recent_history(group_id: str, limit: int = 20):
             ChatHistory.is_summary == 1
         ).order_by(ChatHistory.timestamp.desc()).first()
         summary = summary_obj.content if summary_obj else ""
-        return history, summary
+
+        # 最后一条消息的时间戳（用于 last_reply）
+        last_msg = session.query(ChatHistory).filter(
+            ChatHistory.group_id == group_id
+        ).order_by(ChatHistory.timestamp.desc()).first()
+        last_timestamp = last_msg.timestamp if last_msg else datetime.now()
+
+        return history, summary, last_timestamp
     finally:
         session.close()
 
 
-def recall_memory(group_id: str, time_range: str = "", keywords: str = "",
+def recall_memory(time_range: str = "", keywords: str = "",
                   limit: int = 5, context_lines: int = 1) -> str:
     """
     根据时间和关键词召回历史对话，并附带命中消息的上下文。
@@ -156,6 +168,7 @@ def recall_memory(group_id: str, time_range: str = "", keywords: str = "",
     返回：
         格式化的对话片段，包含时间和角色。
     """
+    group_id = current_group_id.get()
     session = Session()
     try:
         MAX_SPAN_DAYS = 90

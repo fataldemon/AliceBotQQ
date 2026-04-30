@@ -11,27 +11,76 @@ from src.skills.game_development import WORKSPACE  # 假设你有这个配置，
 
 def is_safe_git_command(command: str) -> bool:
     """
-    检查命令是否安全的 git 命令。
-    只允许 git 开头，且不包含危险符号。
+    检查 git 命令是否安全，忽略引号内的内容（如提交消息）。
+    - 允许管道 |、逻辑 && ||、后台 &、输入重定向 <
+    - 允许环境变量、git -c 参数
+    - 允许只读系统命令（head, grep, cat, echo 等）
+    - 禁止引号外的：命令分隔符 ; ；命令替换 ` $() ；输出重定向 > >>
+    - 禁止危险写入命令（rm, mv, cp, tee, curl, wget, dd 等）
     """
-    # 去除首尾空格
+    def remove_quoted_content(s: str) -> str:
+        """将单引号或双引号内的内容替换为空格（保留引号对本身）"""
+        result = []
+        i = 0
+        n = len(s)
+        while i < n:
+            ch = s[i]
+            # 双引号块（支持转义）
+            if ch == '"':
+                result.append(ch)      # 保留开引号
+                i += 1
+                while i < n and s[i] != '"':
+                    if s[i] == '\\' and i + 1 < n:  # 跳过转义字符
+                        result.append(' ')
+                        result.append(' ')
+                        i += 2
+                    else:
+                        result.append(' ')
+                        i += 1
+                if i < n and s[i] == '"':
+                    result.append(ch)  # 保留闭引号
+                    i += 1
+            # 单引号块（不支持转义）
+            elif ch == "'":
+                result.append(ch)
+                i += 1
+                while i < n and s[i] != "'":
+                    result.append(' ')
+                    i += 1
+                if i < n and s[i] == "'":
+                    result.append(ch)
+                    i += 1
+            else:
+                result.append(ch)
+                i += 1
+        return ''.join(result)
+
     cmd = command.strip()
-    # 必须以 'git ' 开头（允许 git 子命令）
-    if not cmd.startswith('git '):
+    if not cmd:
         return False
 
-    # 危险字符正则：&& || ; | > < $ ` \ ( ) & (多个命令分隔)
-    if re.search(r'[;&|><$`]', cmd):
+    # 移除了引号内内容后的字符串（保留引号位置，内部替换为空格）
+    clean_cmd = remove_quoted_content(cmd)
+
+    # 1. 禁止引号外的命令分隔符和命令替换
+    if re.search(r'[;`]|\$\(', clean_cmd):
         return False
 
-    # 禁止使用 -c 参数执行任意代码（git -c user.name='...' 可能被利用）
-    if re.search(r'\s+-c\s+', cmd):
+    # 2. 禁止引号外的输出重定向 > 或 >>
+    if re.search(r'(?<![<>])>(?!>)|>>', clean_cmd):
         return False
 
-    # 禁止环境变量赋值
-    if re.search(r'^[A-Za-z_][A-Za-z0-9_]*=', cmd):
+    # 3. 禁止引号外的危险写入命令（常见破坏性工具）
+    dangerous = re.compile(
+        r'\b(rm|mv|cp|dd|tee|chmod|chown|chattr|kill|pkill|killall|'
+        r'shutdown|reboot|halt|poweroff|mkfs|fdisk|curl|wget|'
+        r'ssh|scp|rsync|nc|telnet|mount|umount|pkg|apt|yum|dnf|pip|npm|gem)\b',
+        re.IGNORECASE
+    )
+    if dangerous.search(clean_cmd):
         return False
 
+    # 通过所有检查
     return True
 
 

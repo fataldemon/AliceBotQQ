@@ -123,11 +123,11 @@ class Qwen(LLM):
         self.code_zone = []
         self.document_zone = []
         self.last_reply = datetime.now()
-        self.cut_point = min(20, len(self.history) - 20)
+        self.cut_point = min(20, self.max_history - 20)
 
         # 新增：从数据库恢复历史和摘要
         if self.group_id:
-            self.history, self.summary = load_recent_history(self.group_id, limit=self.cut_point)
+            self.history, self.summary, self.last_reply = load_recent_history(self.group_id, limit=self.cut_point)
 
     @property
     def _llm_type(self) -> str:
@@ -259,22 +259,35 @@ class Qwen(LLM):
             if time_diff < 3600:
                 minutes = time_diff // 60
                 prompt = f"（{minutes}分钟过去了。）\n{prompt}"
+            elif time_diff < 3600 * 12:
+                hours = time_diff // 3600
+                prompt = f"（{hours}小时过去了。）\n{prompt}"
             else:
-                self.history = []
+                self.history, self.summary, self.last_reply = load_recent_history(self.group_id, limit=self.cut_point)
+                if time_diff < 3600 * 24:
+                    prompt = f"（半天之后。）\n{prompt}"
+                else:
+                    days = time_diff // (3600 * 24)
+                    prompt = f"（{days}天之后。）\n{prompt}"
                 self.record_dialog_in_file(get_json(self.conversations, ""))
 
-        clean_prompt = prompt.split("\n（提示：")[0] if "（提示：" in prompt else prompt
+        # 查找最后一个"（提示："的位置
+        tip_pos = prompt.rfind("（提示：")
+        if tip_pos != -1:
+            raw_prompt = prompt[:tip_pos].rstrip()
+        else:
+            raw_prompt = prompt
 
         if not self.history:
-            self.conversations.append(create_first_conversation({"role": "user", "content": clean_prompt}, self.functions))
+            self.conversations.append(create_first_conversation({"role": "user", "content": raw_prompt}, self.functions))
         else:
-            self.conversations.append(create_conversation({"role": "user", "content": clean_prompt}))
-        self.history.append(build_message("user", clean_prompt))
+            self.conversations.append(create_conversation({"role": "user", "content": raw_prompt}))
+
         asyncio.create_task(asyncio.to_thread(
             save_chat_record,
             group_id=self.group_id,
             role="user",
-            content=clean_prompt,
+            content=raw_prompt,
             request_id=request_id
         ))
 
@@ -282,8 +295,9 @@ class Qwen(LLM):
             self.processing_cache["prompt"] = ""
 
         self.last_reply = datetime.now()
+        messages = self.history + [build_message("user", prompt)]
+        self.history.append(build_message("user", raw_prompt))
 
-        messages = self.history
         extra_info = f"{embedding}\n{status}"
         return self._build_base_query(messages, tools, extra_info, request_id, abort_id)
 
@@ -439,7 +453,7 @@ class Qwen(LLM):
             print(f"Action Input: {action_input}")
             try:
                 args_dict = json.loads(action_input)
-                feedback = await skill_call(action_name, args_dict)
+                feedback = await skill_call(action_name, args_dict, self.group_id)
                 if action_name in ("read_code_file", "write_file"):
                     filename = args_dict.get("filename", "")
                     if filename.endswith(".md"):
